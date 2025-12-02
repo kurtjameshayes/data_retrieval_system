@@ -104,6 +104,9 @@ curl -X POST http://localhost:5000/api/v1/query \
 Leverage the `QueryEngine` to execute multiple queries, join the results into a
 pandas DataFrame, and feed the combined data into a rich analysis toolkit.
 
+Refer to `ANALYSIS_GUIDE.md` for a step-by-step walkthrough and
+`analysis_example.py` for a runnable script that uses in-memory data.
+
 ```python
 from core.query_engine import QueryEngine
 

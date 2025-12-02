@@ -22,7 +22,7 @@ class DataAnalysisEngine:
         numeric_df = df.select_dtypes(include="number")
         categorical_df = df.select_dtypes(exclude="number")
 
-        describe_all = df.describe(include="all", datetime_is_numeric=True).fillna(value=np.nan)
+        describe_all = df.describe(include="all").fillna(value=np.nan)
         stats_payload = {
             "row_count": int(len(df)),
             "column_count": int(df.shape[1]),
