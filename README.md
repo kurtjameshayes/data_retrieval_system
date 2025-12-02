@@ -99,6 +99,66 @@ curl -X POST http://localhost:5000/api/v1/query \
   }'
 ```
 
+## Advanced Query Joins & Analysis
+
+Leverage the `QueryEngine` to execute multiple queries, join the results into a
+pandas DataFrame, and feed the combined data into a rich analysis toolkit.
+
+```python
+from core.query_engine import QueryEngine
+
+query_engine = QueryEngine()
+
+joined_df = query_engine.execute_queries_to_dataframe(
+    queries=[
+        {
+            "source_id": "census_api",
+            "parameters": {"dataset": "2020/acs/acs5", "get": "NAME,B01003_001E", "for": "state:*"},
+            "alias": "population"
+        },
+        {
+            "source_id": "usda_quickstats",
+            "parameters": {"commodity_desc": "CORN", "year": "2020", "format": "JSON"},
+            "alias": "agriculture"
+        }
+    ],
+    join_on=["state"],
+    aggregation={
+        "group_by": ["state"],
+        "metrics": [{"column": "value", "agg": "sum", "alias": "total_value"}]
+    }
+)
+
+analysis_plan = {
+    "basic_statistics": True,
+    "exploratory": True,
+    "inferential_tests": [{"x": "total_value", "y": "B01003_001E", "test": "pearson"}],
+    "linear_regression": {"features": ["total_value"], "target": "B01003_001E"},
+    "predictive": {"features": ["total_value"], "target": "B01003_001E", "model_type": "forest"}
+}
+
+analysis = query_engine.analyze_queries(
+    queries=[
+        {"source_id": "census_api", "parameters": {"dataset": "2020/acs/acs5", "get": "NAME,B01003_001E", "for": "state:*"}},
+        {"source_id": "usda_quickstats", "parameters": {"commodity_desc": "CORN", "year": "2020", "format": "JSON"}}
+    ],
+    join_on=["state"],
+    analysis_plan=analysis_plan
+)
+
+dataframe = analysis["dataframe"]      # pandas.DataFrame
+insights = analysis["analysis"]        # dict of statistical outputs
+```
+
+The `DataAnalysisEngine` unlocks:
+
+- Descriptive statistics & exploratory summaries
+- Inferential tests (Pearson, Spearman, t-tests)
+- Time-series smoothing and volatility checks
+- Linear and non-linear (random forest) regressions
+- Multivariate PCA projections
+- Predictive analysis with shared configuration
+
 ## Connectors
 
 ### USDA NASS QuickStats

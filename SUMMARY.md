@@ -87,6 +87,11 @@ data_retrieval_system/
 - Sorting and pagination
 - Cache invalidation
 
+✅ **DataFrame Joins & Analytics**
+- `QueryEngine.execute_queries_to_dataframe` joins multi-source results with optional aggregations
+- `QueryEngine.analyze_queries` orchestrates DataFrame creation plus configurable analysis plans
+- `core/data_analysis.py` provides linear & random-forest regression, descriptive stats, inferential and time-series tooling, PCA, and predictive helpers
+
 ## Quick Start Commands
 
 ```bash
