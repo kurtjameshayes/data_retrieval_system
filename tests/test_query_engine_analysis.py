@@ -46,7 +46,7 @@ class SampleQueryEngine(QueryEngine):
         )
         self._responses = responses
 
-    def execute_query(self, source_id, parameters, use_cache=None, query_id=None):
+    def execute_query(self, source_id, parameters, use_cache=None, query_id=None, processing_context=None):
         response = self._responses.get(source_id)
         if response is None:
             raise ValueError(f"Missing response for {source_id}")

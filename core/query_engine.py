@@ -36,7 +36,8 @@ class QueryEngine:
         self.use_cache = True
     
     def execute_query(self, source_id: str, parameters: Dict[str, Any], 
-                     use_cache: bool = None, query_id: str = None) -> Dict[str, Any]:
+                     use_cache: bool = None, query_id: str = None,
+                     processing_context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Execute a query against a data source.
         
@@ -45,6 +46,8 @@ class QueryEngine:
             parameters: Query parameters
             use_cache: Override default cache behavior
             query_id: Optional reference to stored query
+            processing_context: Optional connector-specific context for
+                post-processing hooks
             
         Returns:
             Dict containing query results
@@ -52,14 +55,19 @@ class QueryEngine:
         # Determine if cache should be used
         should_use_cache = use_cache if use_cache is not None else self.use_cache
         
+        context = self._build_processing_context(parameters, processing_context, query_id)
+        
         # Try to get from cache first
         if should_use_cache:
             cached_result = self.cache_manager.get(source_id, parameters)
             if cached_result:
+                processed_cache = self._apply_connector_processing(
+                    source_id, cached_result, context
+                )
                 result = {
                     "success": True,
                     "source": "cache",
-                    "data": cached_result
+                    "data": processed_cache
                 }
                 # Add query_id if provided
                 if query_id:
@@ -71,6 +79,12 @@ class QueryEngine:
             result = self.connector_manager.query(source_id, parameters)
             
             if result.get("success"):
+                processed_payload = self._apply_connector_processing(
+                    source_id, result.get("data"), context
+                )
+                if processed_payload is not None:
+                    result["data"] = processed_payload
+                
                 # Cache the result with query_id if provided
                 if should_use_cache:
                     self.cache_manager.set(source_id, parameters, result["data"], query_id=query_id)
@@ -139,7 +153,14 @@ class QueryEngine:
                 parameters.update(parameter_overrides)
             
             # Execute the query with query_id reference
-            result = self.execute_query(connector_id, parameters, use_cache, query_id=query_id)
+            processing_context = {"stored_query": stored_query}
+            result = self.execute_query(
+                connector_id,
+                parameters,
+                use_cache,
+                query_id=query_id,
+                processing_context=processing_context
+            )
             
             # Add stored query metadata to result
             if result.get("success"):
@@ -476,3 +497,41 @@ class QueryEngine:
             "cache_stats": self.cache_manager.get_stats(),
             "available_sources": len(self.connector_manager.list_sources())
         }
+    
+    def _build_processing_context(
+        self,
+        parameters: Dict[str, Any],
+        extra_context: Optional[Dict[str, Any]],
+        query_id: Optional[str],
+    ) -> Dict[str, Any]:
+        context: Dict[str, Any] = {}
+        if parameters is not None:
+            context["parameters"] = parameters.copy()
+        if query_id:
+            context["query_id"] = query_id
+        if extra_context:
+            context.update(extra_context)
+        return context
+    
+    def _apply_connector_processing(
+        self,
+        source_id: str,
+        payload: Optional[Dict[str, Any]],
+        context: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        if not payload:
+            return payload
+        
+        connector = self.connector_manager.get_connector(source_id)
+        if not connector:
+            return payload
+        
+        try:
+            return connector.process_query_result(payload, context)
+        except Exception as exc:
+            logger.warning(
+                "Post-processing failed for %s: %s",
+                source_id,
+                str(exc),
+            )
+            return payload
