@@ -243,14 +243,12 @@ class CensusConnector(BaseConnector):
             return result
         
         dataset = self._extract_dataset_from_context(context)
-        if not dataset:
-            return result
         
         column_order = self._collect_column_names(result)
         if not column_order:
             return result
         
-        description_map = self._attribute_repository.get_descriptions(dataset, column_order)
+        description_map = self._attribute_repository.get_descriptions(column_order)
         if not description_map:
             return result
         
@@ -358,13 +356,14 @@ class CensusConnector(BaseConnector):
         result: Dict[str, Any],
         rename_map: Dict[str, str],
         description_map: Dict[str, str],
-        dataset: str,
+        dataset: Optional[str],
     ):
         metadata = result.setdefault("metadata", {})
         overrides = metadata.setdefault("column_name_overrides", {})
         overrides.update(rename_map)
         metadata.setdefault("column_description_source", "attr_name")
-        metadata.setdefault("dataset", dataset)
+        if dataset:
+            metadata.setdefault("dataset", dataset)
         metadata.setdefault("attribute_descriptions", {})
         metadata["attribute_descriptions"].update({
             code: description_map.get(code)
@@ -372,7 +371,10 @@ class CensusConnector(BaseConnector):
             if description_map.get(code)
         })
         metadata.setdefault("notes", [])
-        note = f"Column names sourced from attr_name for dataset '{dataset}'"
+        if dataset:
+            note = f"Column names sourced from attr_name for dataset '{dataset}'"
+        else:
+            note = "Column names sourced from attr_name"
         if note not in metadata["notes"]:
             metadata["notes"].append(note)
 
@@ -383,39 +385,84 @@ class CensusAttributeNameRepository:
     to their human-readable descriptions.
     """
     
+    _CODE_FIELDS = (
+        "attr_id",
+        "attribute_id",
+        "attribute_code",
+        "code",
+        "variable",
+        "name",
+    )
+    
     def __init__(self):
         self._client = MongoClient(Config.MONGO_URI)
         self._collection = self._client[Config.DATABASE_NAME]["attr_name"]
-        self._cache: Dict[str, Dict[str, str]] = {}
+        self._cache: Dict[str, Optional[str]] = {}
     
-    def get_descriptions(self, dataset: str, attribute_codes: List[str]) -> Dict[str, str]:
-        if not dataset or not attribute_codes:
+    def get_descriptions(self, attribute_codes: List[str]) -> Dict[str, str]:
+        """
+        Retrieve descriptions for the provided Census variable codes.
+        
+        The attr_name collection may contain multiple datasets, but lookups
+        only consider the variable code to ensure the widest possible match.
+        """
+        normalized = [
+            code.strip()
+            for code in attribute_codes
+            if isinstance(code, str) and code.strip()
+        ]
+        if not normalized:
             return {}
         
-        cached = self._cache.get(dataset)
-        if cached is None:
-            cached = self._load_dataset(dataset)
-            self._cache[dataset] = cached
+        descriptions: Dict[str, str] = {}
+        missing: List[str] = []
         
-        descriptions = {}
-        for code in attribute_codes:
-            description = cached.get(code)
-            if description:
-                descriptions[code] = description
+        for code in normalized:
+            if code in descriptions:
+                continue
+            
+            if code in self._cache:
+                cached = self._cache[code]
+                if cached:
+                    descriptions[code] = cached
+            else:
+                missing.append(code)
+        
+        if missing:
+            pending_codes = list(dict.fromkeys(missing))
+            fetched = self._load_by_codes(pending_codes)
+            for code, description in fetched.items():
+                self._cache[code] = description
+                if description:
+                    descriptions[code] = description
+            
+            for code in pending_codes:
+                self._cache.setdefault(code, fetched.get(code))
+        
         return descriptions
     
-    def _load_dataset(self, dataset: str) -> Dict[str, str]:
-        mapping: Dict[str, str] = {}
+    def _load_by_codes(self, codes: List[str]) -> Dict[str, Optional[str]]:
+        mapping: Dict[str, Optional[str]] = {}
+        query = self._build_code_query(codes)
+        if not query:
+            return mapping
+        
         try:
-            cursor = self._collection.find({"dataset": dataset})
+            cursor = self._collection.find(query)
             for doc in cursor:
                 code = self._extract_code(doc)
                 description = self._extract_description(doc)
-                if code and description:
+                if code and code in codes:
                     mapping[code] = description
         except Exception as exc:
-            logger.warning("Failed loading attr_name dataset %s: %s", dataset, str(exc))
+            logger.warning("Failed loading attr_name codes %s: %s", codes, str(exc))
         return mapping
+    
+    def _build_code_query(self, codes: List[str]) -> Optional[Dict[str, Any]]:
+        clauses = [{field: {"$in": codes}} for field in self._CODE_FIELDS]
+        if not clauses:
+            return None
+        return {"$or": clauses}
     
     @staticmethod
     def _extract_code(doc: Dict[str, Any]) -> Optional[str]:
