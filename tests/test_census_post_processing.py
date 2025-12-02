@@ -10,7 +10,7 @@ class FakeAttrRepo:
     def __init__(self, mapping):
         self.mapping = mapping
     
-    def get_descriptions(self, dataset, attribute_codes):
+    def get_descriptions(self, attribute_codes):
         return {
             code: self.mapping.get(code)
             for code in attribute_codes
@@ -63,6 +63,36 @@ def test_census_connector_process_query_result_replaces_codes():
     assert overrides["B22010_001E"] == "Total households"
     assert overrides["B22010_002E"] == "SNAP households"
 
+
+def test_census_connector_process_query_result_without_dataset_context():
+    connector = CensusConnector({"source_id": "census_api", "source_name": "Census"})
+    connector._attribute_repository = FakeAttrRepo({
+        "B19013_001E": "Median household income",
+    })
+    
+    result = {
+        "metadata": {},
+        "data": [
+            {"NAME": "ZCTA 67890", "B19013_001E": "72000"},
+        ],
+        "schema": {
+            "fields": [
+                {"name": "NAME", "type": "string"},
+                {"name": "B19013_001E", "type": "string"},
+            ]
+        },
+    }
+    
+    processed = connector.process_query_result(copy.deepcopy(result), context={})
+    
+    record = processed["data"][0]
+    assert "Median household income" in record
+    assert "B19013_001E" not in record
+    
+    metadata = processed["metadata"]
+    assert metadata["column_name_overrides"]["B19013_001E"] == "Median household income"
+    assert "dataset" not in metadata
+    assert "Column names sourced from attr_name" in metadata["notes"]
 
 class StubConnector(BaseConnector):
     def __init__(self):
