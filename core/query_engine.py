@@ -1,8 +1,12 @@
-from typing import Dict, Any, List, Optional
-from core.connector_manager import ConnectorManager
-from core.cache_manager import CacheManager
-from models.stored_query import StoredQuery
+from typing import Dict, Any, List, Optional, Union
 import logging
+
+import pandas as pd
+
+from core.cache_manager import CacheManager
+from core.connector_manager import ConnectorManager
+from core.data_analysis import DataAnalysisEngine
+from models.stored_query import StoredQuery
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -12,8 +16,9 @@ class QueryEngine:
     Orchestrates data retrieval requests with caching and optimization.
     """
     
-    def __init__(self, connector_manager: ConnectorManager = None, 
-                 cache_manager: CacheManager = None):
+    def __init__(self, connector_manager: ConnectorManager = None,
+                 cache_manager: CacheManager = None,
+                 analysis_engine: DataAnalysisEngine = None):
         """
         Initialize query engine.
         
@@ -23,6 +28,7 @@ class QueryEngine:
         """
         self.connector_manager = connector_manager or ConnectorManager()
         self.cache_manager = cache_manager or CacheManager()
+        self.analysis_engine = analysis_engine or DataAnalysisEngine()
         self.stored_query = StoredQuery()
         self.use_cache = True
     
@@ -274,6 +280,142 @@ class QueryEngine:
                 "success": False,
                 "error": f"Unknown aggregation type: {agg_type}"
             }
+
+    def execute_queries_to_dataframe(
+        self,
+        queries: List[Dict[str, Any]],
+        join_on: Union[List[str], str],
+        how: str = "inner",
+        aggregation: Optional[Dict[str, Any]] = None,
+        use_cache: bool = None,
+    ) -> pd.DataFrame:
+        """
+        Execute two or more queries, join their results, and return a DataFrame.
+
+        Args:
+            queries: List of query specifications with keys:
+                - source_id (str): required
+                - parameters (dict): optional
+                - alias (str): optional label used in suffixes
+                - rename_columns (dict): optional column rename map applied before joins
+            join_on: Column name or list of column names to join on
+            how: pandas merge strategy (inner, left, right, outer)
+            aggregation: Optional aggregation definition:
+                {
+                    "group_by": ["state"],
+                    "metrics": [
+                        {"column": "value", "agg": "sum", "alias": "total_value"}
+                    ]
+                }
+            use_cache: Override cache usage for underlying queries
+
+        Returns:
+            pd.DataFrame containing the joined (and optionally aggregated) data.
+        """
+        if not queries or len(queries) < 2:
+            raise ValueError("At least two queries are required to build a DataFrame")
+
+        join_keys = [join_on] if isinstance(join_on, str) else join_on
+        if not join_keys:
+            raise ValueError("join_on parameter is required")
+
+        dataframes = []
+        for spec in queries:
+            source_id = spec.get("source_id")
+            if not source_id:
+                raise ValueError("Each query spec must include a source_id")
+
+            parameters = spec.get("parameters", {})
+            alias = spec.get("alias", source_id)
+            rename_map = spec.get("rename_columns")
+
+            result = self.execute_query(source_id, parameters, use_cache)
+            if not result.get("success"):
+                raise ValueError(f"Query failed for {source_id}: {result.get('error')}")
+
+            records = self._extract_records(result)
+            df = pd.DataFrame(records)
+
+            if rename_map:
+                df = df.rename(columns=rename_map)
+
+            missing_keys = [key for key in join_keys if key not in df.columns]
+            if missing_keys:
+                raise ValueError(
+                    f"Join keys {missing_keys} not present in query result for {source_id}"
+                )
+
+            dataframes.append({"alias": alias, "df": df})
+
+        joined_df = dataframes[0]["df"]
+        for entry in dataframes[1:]:
+            joined_df = pd.merge(
+                joined_df,
+                entry["df"],
+                on=join_keys,
+                how=how,
+                suffixes=("", f"_{entry['alias']}"),
+            )
+
+        if aggregation:
+            joined_df = self._apply_aggregation(joined_df, aggregation)
+
+        return joined_df
+
+    def analyze_queries(
+        self,
+        queries: List[Dict[str, Any]],
+        join_on: Union[List[str], str],
+        analysis_plan: Dict[str, Any],
+        how: str = "inner",
+        aggregation: Optional[Dict[str, Any]] = None,
+        use_cache: bool = None,
+    ) -> Dict[str, Any]:
+        """
+        Build a DataFrame from multiple queries and run an analysis plan.
+        Returns both the DataFrame and the computed analytical summaries.
+        """
+        dataframe = self.execute_queries_to_dataframe(
+            queries=queries,
+            join_on=join_on,
+            how=how,
+            aggregation=aggregation,
+            use_cache=use_cache,
+        )
+
+        analysis_results = self.analysis_engine.run_suite(dataframe, analysis_plan)
+        return {
+            "dataframe": dataframe,
+            "analysis": analysis_results,
+        }
+
+    @staticmethod
+    def _extract_records(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        payload = result.get("data", {})
+        if isinstance(payload, dict):
+            data = payload.get("data", [])
+        else:
+            data = payload
+        return data or []
+
+    @staticmethod
+    def _apply_aggregation(df: pd.DataFrame, aggregation: Dict[str, Any]) -> pd.DataFrame:
+        group_by = aggregation.get("group_by")
+        metrics = aggregation.get("metrics", [])
+
+        if not group_by or not metrics:
+            raise ValueError("Aggregation requires group_by and metrics definitions")
+
+        agg_ops = {metric["column"]: metric.get("agg", "sum") for metric in metrics}
+        alias_map = {
+            metric["column"]: metric.get("alias", f"{metric['column']}_{metric.get('agg', 'sum')}")
+            for metric in metrics if metric.get("alias")
+        }
+
+        aggregated = df.groupby(group_by, dropna=False).agg(agg_ops).reset_index()
+        if alias_map:
+            aggregated = aggregated.rename(columns=alias_map)
+        return aggregated
     
     def validate_query(self, source_id: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """
