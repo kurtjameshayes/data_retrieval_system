@@ -1,170 +1,160 @@
 #!/usr/bin/env python3
-"""
-Demonstrates how to join multiple query results into a DataFrame and run the
-analysis suite without relying on live connectors.
-"""
+"""Example: run analytics on real saved queries backed by live connectors."""
 from __future__ import annotations
 
+import argparse
 from pprint import pprint
+from typing import List, Sequence
 
-from core.data_analysis import DataAnalysisEngine
 from core.query_engine import QueryEngine
 
 
-class InMemoryStoredQuery:
-    """Minimal stored-query stub for demos/tests."""
+def build_query_specs_from_saved_queries(
+    engine: QueryEngine, query_ids: Sequence[str]
+) -> List[dict]:
+    """Convert stored query definitions into QueryEngine-friendly specs."""
 
-    def get_by_id(self, query_id):
-        return None
+    specs: List[dict] = []
+    for query_id in query_ids:
+        stored_query = engine.get_stored_query(query_id)
+        if not stored_query:
+            raise ValueError(
+                f"Stored query '{query_id}' was not found. "
+                "Use manage_queries.py or the API to create it first."
+            )
 
-    def get_all(self, **_kwargs):
-        return []
-
-    def create(self, data):
-        return data
-
-    def update(self, query_id, data):
-        return False
-
-    def delete(self, query_id):
-        return False
-
-    def search(self, search_term):
-        return []
-
-
-class FakeConnectorManager:
-    """No-op connector manager used to satisfy QueryEngine dependencies."""
-
-    def list_sources(self):
-        return []
-
-
-class FakeCacheManager:
-    """In-memory cache stub for demonstrations."""
-
-    def __init__(self):
-        self._store = {}
-
-    def get(self, source_id, parameters):
-        return None
-
-    def set(self, source_id, parameters, result, ttl=None, query_id=None):
-        key = (source_id, tuple(sorted(parameters.items())))
-        self._store[key] = result
-        return True
-
-    def invalidate(self, source_id, parameters=None):
-        self._store = {
-            key: value for key, value in self._store.items() if key[0] != source_id
+        spec = {
+            "source_id": stored_query["connector_id"],
+            "parameters": stored_query.get("parameters", {}),
+            "alias": stored_query.get("alias")
+            or stored_query.get("query_name")
+            or query_id,
         }
-        return True
 
-    def get_stats(self):
-        return {"entries": len(self._store)}
+        rename_columns = stored_query.get("rename_columns")
+        if rename_columns:
+            spec["rename_columns"] = rename_columns
 
+        specs.append(spec)
 
-class SampleQueryEngine(QueryEngine):
-    """QueryEngine that serves deterministic, in-memory responses."""
-
-    SAMPLE_RESPONSES = {
-        "census_api": {
-            "success": True,
-            "data": {
-                "data": [
-                    {"state": "AL", "year": 2020, "population": 4903185},
-                    {"state": "AK", "year": 2020, "population": 731545},
-                    {"state": "AZ", "year": 2020, "population": 7278717},
-                    {"state": "AR", "year": 2020, "population": 3017804},
-                    {"state": "CA", "year": 2020, "population": 39512223},
-                ]
-            },
-        },
-        "usda_quickstats": {
-            "success": True,
-            "data": {
-                "data": [
-                    {"state": "AL", "year": 2020, "corn_value": 125.5},
-                    {"state": "AK", "year": 2020, "corn_value": 75.2},
-                    {"state": "AZ", "year": 2020, "corn_value": 310.8},
-                    {"state": "AR", "year": 2020, "corn_value": 255.1},
-                    {"state": "CA", "year": 2020, "corn_value": 410.0},
-                ]
-            },
-        },
-    }
-
-    def __init__(self):
-        super().__init__(
-            connector_manager=FakeConnectorManager(),
-            cache_manager=FakeCacheManager(),
-            analysis_engine=DataAnalysisEngine(),
-            stored_query=InMemoryStoredQuery(),
-        )
-
-    def execute_query(self, source_id, parameters, use_cache=None, query_id=None):
-        try:
-            return self.SAMPLE_RESPONSES[source_id]
-        except KeyError as exc:
-            raise ValueError(f"Unknown source_id: {source_id}") from exc
+    return specs
 
 
-def build_analysis():
-    engine = SampleQueryEngine()
+def build_analysis(
+    query_ids: Sequence[str],
+    join_on: Sequence[str],
+    how: str,
+    target_column: str,
+    feature_columns: Sequence[str],
+):
+    if len(query_ids) < 2:
+        raise ValueError("Provide at least two stored query IDs to build a join.")
+
+    engine = QueryEngine()
+    query_specs = build_query_specs_from_saved_queries(engine, query_ids)
 
     dataframe = engine.execute_queries_to_dataframe(
-        queries=[
-            {
-                "source_id": "census_api",
-                "parameters": {},
-                "alias": "population",
-            },
-            {
-                "source_id": "usda_quickstats",
-                "parameters": {},
-                "alias": "agriculture",
-            },
-        ],
-        join_on=["state", "year"],
-        how="inner",
+        queries=query_specs,
+        join_on=list(join_on),
+        how=how,
     )
 
     analysis_plan = {
         "basic_statistics": True,
         "linear_regression": {
-            "features": ["corn_value"],
-            "target": "population",
+            "features": list(feature_columns),
+            "target": target_column,
         },
         "predictive": {
-            "features": ["corn_value"],
-            "target": "population",
+            "features": list(feature_columns),
+            "target": target_column,
             "model_type": "forest",
             "n_estimators": 50,
         },
     }
 
     analysis_result = engine.analyze_queries(
-        queries=[
-            {"source_id": "census_api", "parameters": {}},
-            {"source_id": "usda_quickstats", "parameters": {}},
-        ],
-        join_on=["state", "year"],
+        queries=query_specs,
+        join_on=list(join_on),
         analysis_plan=analysis_plan,
+        how=how,
     )
 
-    return dataframe, analysis_result
+    return engine, query_specs, dataframe, analysis_result
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Join multiple stored queries and run the analysis engine using live APIs."
+        )
+    )
+    parser.add_argument(
+        "--query-ids",
+        nargs="+",
+        required=True,
+        help=(
+            "Stored query IDs to join. These must already exist in MongoDB. "
+            "Use manage_queries.py or add_census_queries.py to create them."
+        ),
+    )
+    parser.add_argument(
+        "--join-on",
+        nargs="+",
+        default=["state", "year"],
+        help="Columns shared across the saved queries used for the join",
+    )
+    parser.add_argument(
+        "--how",
+        default="inner",
+        choices=["inner", "left", "right", "outer"],
+        help="Join strategy passed to pandas.merge",
+    )
+    parser.add_argument(
+        "--target-column",
+        default="population",
+        help="Column to predict in regression/predictive analyses",
+    )
+    parser.add_argument(
+        "--feature-columns",
+        nargs="+",
+        default=["corn_value"],
+        help="Feature columns used for modeling",
+    )
+    return parser.parse_args()
 
 
 def main():
-    dataframe, analysis = build_analysis()
-    print("\nJoined DataFrame:\n")
-    print(dataframe)
+    args = parse_args()
+
+    (
+        engine,
+        query_specs,
+        dataframe,
+        analysis,
+    ) = build_analysis(
+        query_ids=args.query_ids,
+        join_on=args.join_on,
+        how=args.how,
+        target_column=args.target_column,
+        feature_columns=args.feature_columns,
+    )
+
+    print("Saved queries executed:")
+    for idx, query_id in enumerate(args.query_ids):
+        stored_query = engine.get_stored_query(query_id)
+        alias = query_specs[idx]["alias"]
+        connector_id = stored_query["connector_id"] if stored_query else "?"
+        print(f"- {alias} ({query_id}) -> {connector_id}")
+
+    print("\nJoined DataFrame sample:\n")
+    print(dataframe.head())
 
     print("\nLinear Regression Summary:\n")
-    pprint(analysis["analysis"]["linear_regression"])
+    pprint(analysis["analysis"].get("linear_regression"))
 
     print("\nPredictive Analysis Summary:\n")
-    pprint(analysis["analysis"]["predictive_analysis"])
+    pprint(analysis["analysis"].get("predictive_analysis"))
 
 
 if __name__ == "__main__":
