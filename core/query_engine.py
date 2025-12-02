@@ -18,18 +18,21 @@ class QueryEngine:
     
     def __init__(self, connector_manager: ConnectorManager = None,
                  cache_manager: CacheManager = None,
-                 analysis_engine: DataAnalysisEngine = None):
+                 analysis_engine: DataAnalysisEngine = None,
+                 stored_query: StoredQuery = None):
         """
         Initialize query engine.
         
         Args:
             connector_manager: ConnectorManager instance
             cache_manager: CacheManager instance
+            analysis_engine: Optional DataAnalysisEngine instance
+            stored_query: Optional StoredQuery instance
         """
         self.connector_manager = connector_manager or ConnectorManager()
         self.cache_manager = cache_manager or CacheManager()
         self.analysis_engine = analysis_engine or DataAnalysisEngine()
-        self.stored_query = StoredQuery()
+        self.stored_query = stored_query or StoredQuery()
         self.use_cache = True
     
     def execute_query(self, source_id: str, parameters: Dict[str, Any], 
