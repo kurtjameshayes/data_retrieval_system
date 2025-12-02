@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 
 import requests
 from pymongo import MongoClient
@@ -443,17 +443,28 @@ class CensusAttributeNameRepository:
     
     def _load_by_codes(self, codes: List[str]) -> Dict[str, Optional[str]]:
         mapping: Dict[str, Optional[str]] = {}
-        query = self._build_code_query(codes)
+        if not codes:
+            return mapping
+        
+        normalized_codes = [code.strip() for code in codes if isinstance(code, str) and code.strip()]
+        if not normalized_codes:
+            return mapping
+        
+        code_set: Set[str] = set(normalized_codes)
+        query = self._build_code_query(list(code_set))
         if not query:
             return mapping
         
         try:
             cursor = self._collection.find(query)
             for doc in cursor:
-                code = self._extract_code(doc)
+                matches = self._extract_matching_codes(doc, code_set)
+                if not matches:
+                    continue
+                
                 description = self._extract_description(doc)
-                if code and code in codes:
-                    mapping[code] = description
+                for match in matches:
+                    mapping.setdefault(match, description)
         except Exception as exc:
             logger.warning("Failed loading attr_name codes %s: %s", codes, str(exc))
         return mapping
@@ -465,12 +476,16 @@ class CensusAttributeNameRepository:
         return {"$or": clauses}
     
     @staticmethod
-    def _extract_code(doc: Dict[str, Any]) -> Optional[str]:
+    def _extract_matching_codes(doc: Dict[str, Any], code_set: Set[str]) -> List[str]:
+        matches: List[str] = []
         for key in ("attr_id", "attribute_id", "attribute_code", "code", "variable", "name"):
             value = doc.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        return None
+            if not isinstance(value, str):
+                continue
+            candidate = value.strip()
+            if candidate and candidate in code_set:
+                matches.append(candidate)
+        return matches
     
     @staticmethod
     def _extract_description(doc: Dict[str, Any]) -> Optional[str]:
