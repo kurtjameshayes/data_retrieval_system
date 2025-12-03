@@ -58,6 +58,9 @@ def test_regression_methods(sample_df):
         target="value",
     )
     assert "coefficients" in linear
+    assert len(linear["full_predictions"]) == len(sample_df)
+    assert len(linear["actual_values"]) == len(sample_df)
+    assert len(linear["row_indices"]) == len(sample_df)
 
     forest = engine.random_forest_regression(
         sample_df,
@@ -66,6 +69,9 @@ def test_regression_methods(sample_df):
         n_estimators=50,
     )
     assert "feature_importance" in forest
+    assert len(forest["full_predictions"]) == len(sample_df)
+    assert len(forest["actual_values"]) == len(sample_df)
+    assert len(forest["row_indices"]) == len(sample_df)
 
 
 def test_multivariate_and_predictive(sample_df):
