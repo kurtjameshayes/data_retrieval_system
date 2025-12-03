@@ -4,13 +4,9 @@ from __future__ import annotations
 
 import argparse
 import math
-from pathlib import Path
 from pprint import pprint
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd
 
@@ -159,14 +155,13 @@ def plot_analysis_results(
     join_on: Sequence[str],
     target_column: str,
     analysis_payload: Dict[str, Any],
-    output_path: Path,
-) -> Optional[Path]:
+) -> bool:
     if target_column not in dataframe.columns:
         raise ValueError(f"Target column '{target_column}' not found in DataFrame")
 
     if dataframe.empty:
         print("No rows returned from the joined queries; skipping plot generation.")
-        return None
+        return False
 
     plot_df = dataframe.copy()
     plot_df["_plot_actual"] = pd.to_numeric(plot_df[target_column], errors="coerce")
@@ -181,7 +176,7 @@ def plot_analysis_results(
         print(
             f"Target column '{target_column}' does not contain numeric values; skipping plot."
         )
-        return None
+        return False
 
     join_columns = [col for col in join_on if col in plot_df.columns]
     if join_columns:
@@ -199,7 +194,7 @@ def plot_analysis_results(
     filtered_df = plot_df[valid_mask].copy()
     if filtered_df.empty:
         print("No overlapping numeric rows remained after filtering; skipping plot.")
-        return None
+        return False
 
     record_count = len(filtered_df)
     desired_width_px = max(
@@ -253,11 +248,9 @@ def plot_analysis_results(
     ax.legend()
     fig.tight_layout()
 
-    output_path = output_path.resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=FIG_DPI)
+    plt.show()
     plt.close(fig)
-    return output_path
+    return True
 
 
 def parse_args():
@@ -298,11 +291,6 @@ def parse_args():
         default=["corn_value"],
         help="Feature columns used for modeling",
     )
-    parser.add_argument(
-        "--plot-path",
-        default="analysis_plot.png",
-        help="Path to save the generated analysis plot (PNG).",
-    )
     return parser.parse_args()
 
 
@@ -339,15 +327,14 @@ def main():
     pprint(analysis["analysis"].get("predictive_analysis"))
 
     try:
-        plot_location = plot_analysis_results(
+        plot_displayed = plot_analysis_results(
             dataframe=dataframe,
             join_on=args.join_on,
             target_column=args.target_column,
             analysis_payload=analysis["analysis"],
-            output_path=Path(args.plot_path),
         )
-        if plot_location:
-            print(f"\nPlot saved to: {plot_location}")
+        if plot_displayed:
+            print("\nPlot displayed using matplotlib.")
     except Exception as exc:
         print(f"\nUnable to generate plot: {exc}")
 
