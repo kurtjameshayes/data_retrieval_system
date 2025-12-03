@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 from pprint import pprint
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -14,6 +15,13 @@ import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd
 
 from core.query_engine import QueryEngine
+
+FIG_DPI = 160
+MAX_IMAGE_DIMENSION = (1 << 16) - 2048  # Matplotlib hard limit is 2**16
+PREFERRED_PIXELS_PER_POINT = 6
+BASE_FIG_WIDTH = 8
+FIG_HEIGHT = 6
+MAX_TICKS = 200
 
 
 def build_query_specs_from_saved_queries(
@@ -193,9 +201,17 @@ def plot_analysis_results(
         print("No overlapping numeric rows remained after filtering; skipping plot.")
         return None
 
-    x_positions = list(range(len(filtered_df)))
-    fig_width = max(8, len(filtered_df) * 0.35)
-    fig, ax = plt.subplots(figsize=(fig_width, 6))
+    record_count = len(filtered_df)
+    desired_width_px = max(
+        BASE_FIG_WIDTH * FIG_DPI,
+        record_count * PREFERRED_PIXELS_PER_POINT,
+    )
+    max_width_px = MAX_IMAGE_DIMENSION
+    scale_factor = desired_width_px / max_width_px if desired_width_px > max_width_px else 1.0
+    scaled_width_px = min(desired_width_px, max_width_px)
+    fig_width = scaled_width_px / FIG_DPI
+    x_positions = [idx / scale_factor for idx in range(record_count)]
+    fig, ax = plt.subplots(figsize=(fig_width, FIG_HEIGHT), dpi=FIG_DPI)
     ax.plot(
         x_positions,
         filtered_df["_plot_actual"],
@@ -221,15 +237,25 @@ def plot_analysis_results(
     ax.set_xlabel(x_label)
     ax.set_ylabel(target_column)
     ax.set_title("Query Data vs Predicted Values")
-    ax.set_xticks(x_positions)
-    ax.set_xticklabels(filtered_df["_join_label"], rotation=45, ha="right")
+    join_labels = filtered_df["_join_label"].tolist()
+    if record_count > MAX_TICKS:
+        step = math.ceil(record_count / MAX_TICKS)
+        tick_indices = list(range(0, record_count, step))
+        if tick_indices[-1] != record_count - 1:
+            tick_indices.append(record_count - 1)
+    else:
+        tick_indices = list(range(record_count))
+    tick_positions = [x_positions[idx] for idx in tick_indices]
+    tick_labels = [join_labels[idx] for idx in tick_indices]
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels, rotation=45, ha="right")
     ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.7)
     ax.legend()
     fig.tight_layout()
 
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=160)
+    fig.savefig(output_path, dpi=FIG_DPI)
     plt.close(fig)
     return output_path
 
