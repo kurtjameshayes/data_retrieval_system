@@ -155,6 +155,7 @@ class DataAnalysisEngine:
         model = LinearRegression()
         model.fit(X_train, y_train)
         predictions = model.predict(X_test)
+        full_predictions = model.predict(X)
 
         mse = mean_squared_error(y_test, predictions)
         return {
@@ -163,6 +164,9 @@ class DataAnalysisEngine:
             "r2_score": float(r2_score(y_test, predictions)),
             "rmse": float(np.sqrt(mse)),
             "predictions_sample": predictions[:5].tolist(),
+            "full_predictions": full_predictions.tolist(),
+            "actual_values": y.tolist(),
+            "row_indices": dataset.index.tolist(),
         }
 
     def random_forest_regression(
@@ -195,6 +199,7 @@ class DataAnalysisEngine:
         )
         model.fit(X_train, y_train)
         predictions = model.predict(X_test)
+        full_predictions = model.predict(X)
 
         mse = mean_squared_error(y_test, predictions)
         return {
@@ -202,6 +207,9 @@ class DataAnalysisEngine:
             "r2_score": float(r2_score(y_test, predictions)),
             "rmse": float(np.sqrt(mse)),
             "predictions_sample": predictions[:5].tolist(),
+            "full_predictions": full_predictions.tolist(),
+            "actual_values": y.tolist(),
+            "row_indices": dataset.index.tolist(),
         }
 
     def multivariate_analysis(
