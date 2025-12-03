@@ -59,25 +59,23 @@ EXAMPLE_QUERIES = {
     },
     
     3: {
-        "name": "Texas Violent Crime Estimates",
-        "description": "Get violent crime estimates for Texas",
+        "name": "Texas Violent Crime Counts",
+        "description": "Get violent crime totals submitted by Texas agencies for a specific year",
         "parameters": {
-            "endpoint": "estimates/states/TX/violent-crime",
-            "from": "2018",
-            "to": "2021"
+            "endpoint": "offenses/count/states/TX/violent-crime",
+            "year": "2021"
         },
-        "notes": "Violent crime data specifically for Texas"
+        "notes": "Uses the offenses endpoint documented in the CDE API reference"
     },
     
     4: {
-        "name": "New York Property Crime",
-        "description": "Get property crime estimates for New York",
+        "name": "New York Property Crime Counts",
+        "description": "View statewide property crime totals for New York for a reporting year",
         "parameters": {
-            "endpoint": "estimates/states/NY/property-crime",
-            "from": "2018",
-            "to": "2021"
+            "endpoint": "offenses/count/states/NY/property-crime",
+            "year": "2021"
         },
-        "notes": "Property crime statistics for New York state"
+        "notes": "Offense-specific counts at the state level"
     },
     
     5: {
@@ -92,14 +90,14 @@ EXAMPLE_QUERIES = {
     },
     
     6: {
-        "name": "Florida Violent Crime - Multi-Year",
-        "description": "Get violent crime trend for Florida",
+        "name": "Florida Crime Trend",
+        "description": "Get multi-year statewide estimates for Florida",
         "parameters": {
-            "endpoint": "estimates/states/FL/violent-crime",
+            "endpoint": "estimates/states/FL",
             "from": "2017",
             "to": "2021"
         },
-        "notes": "5-year trend of violent crime in Florida"
+        "notes": "5-year trend of Florida statewide estimates"
     },
     
     7: {
@@ -114,14 +112,14 @@ EXAMPLE_QUERIES = {
     },
     
     8: {
-        "name": "Pennsylvania Property Crime Trend",
-        "description": "Get property crime trend for Pennsylvania",
+        "name": "Pennsylvania Statewide Estimates",
+        "description": "Request statewide estimates for Pennsylvania",
         "parameters": {
-            "endpoint": "estimates/states/PA/property-crime",
+            "endpoint": "estimates/states/PA",
             "from": "2016",
             "to": "2021"
         },
-        "notes": "6-year property crime trend for Pennsylvania"
+        "notes": "Six-year statewide estimate window"
     }
 }
 
@@ -129,10 +127,10 @@ EXAMPLE_QUERIES = {
 # The FBI Crime Data API provides national and state-level crime statistics.
 # 
 # Available endpoints:
-# - estimates/national - National estimates
-# - estimates/states/{state_abbr} - State estimates
-# - estimates/states/{state_abbr}/violent-crime - State violent crime
-# - estimates/states/{state_abbr}/property-crime - State property crime
+# - estimates/national - National estimates (multi-year)
+# - estimates/states/{state_abbr} - State estimates (multi-year)
+# - offenses/count/national/{metric} - Yearly national offense totals
+# - offenses/count/states/{state_abbr}/{metric} - Yearly statewide offense totals
 #
 # For more information: https://crime-data-explorer.fr.cloud.gov/pages/docApi
 
@@ -382,22 +380,29 @@ Common FBI Crime Data Query Parameters:
     Examples:
     - "estimates/national" - National estimates
     - "estimates/states/CA" - California state estimates
-    - "estimates/states/TX/violent-crime" - Texas violent crime
-    - "estimates/states/NY/property-crime" - New York property crime
+    - "offenses/count/states/TX/violent-crime" - Texas violent crime counts
+    - "offenses/count/states/NY/property-crime" - New York property crime totals
   
   from: Start year (e.g., "2018")
   to: End year (e.g., "2021")
+  year: Single reporting year (used by offenses/count endpoints)
 
 Available State Abbreviations:
   AL, AK, AZ, AR, CA, CO, CT, DE, DC, FL, GA, HI, ID, IL, IN, IA, KS, KY,
   LA, ME, MD, MA, MI, MN, MS, MO, MT, NE, NV, NH, NJ, NM, NY, NC, ND, OH,
   OK, OR, PA, RI, SC, SD, TN, TX, UT, VT, VA, WA, WV, WI, WY
 
-Example query structure:
+Example query structure (estimates endpoint):
 {
     "endpoint": "estimates/states/CA",
     "from": "2019",
     "to": "2021"
+}
+
+Example query structure (offenses endpoint):
+{
+    "endpoint": "offenses/count/states/TX/violent-crime",
+    "year": "2021"
 }
 
 API Documentation: https://crime-data-explorer.fr.cloud.gov/pages/docApi
