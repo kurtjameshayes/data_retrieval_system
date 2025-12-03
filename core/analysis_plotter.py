@@ -28,6 +28,7 @@ class AnalysisPlotter:
         join_on: Sequence[str],
         target_column: str,
         analysis_payload: Dict[str, Any],
+        feature_column: Optional[str] = None,
     ) -> bool:
         """Render the analysis plot, returning True if a figure was displayed."""
         if target_column not in dataframe.columns:
@@ -38,6 +39,14 @@ class AnalysisPlotter:
             return False
 
         plot_df = dataframe.copy()
+        axis_label_column: Optional[str] = None
+        if feature_column:
+            if feature_column in plot_df.columns:
+                axis_label_column = feature_column
+            else:
+                print(
+                    f"Feature column '{feature_column}' not found; falling back to join columns for x-axis."
+                )
         plot_df["_plot_actual"] = pd.to_numeric(plot_df[target_column], errors="coerce")
 
         prediction_sources = self._collect_prediction_sources(analysis_payload)
@@ -46,6 +55,8 @@ class AnalysisPlotter:
             print("No predictive outputs found; plotting actual query data only.")
 
         valid_mask = plot_df["_plot_actual"].notna()
+        if axis_label_column:
+            valid_mask &= plot_df[axis_label_column].notna()
         if not valid_mask.any():
             print(
                 f"Target column '{target_column}' does not contain numeric values; skipping plot."
@@ -53,16 +64,21 @@ class AnalysisPlotter:
             return False
 
         join_columns = [col for col in join_on if col in plot_df.columns]
-        if join_columns:
+        if axis_label_column:
+            sort_cols = [axis_label_column, "_plot_actual"]
+            plot_df = plot_df.sort_values(sort_cols)
+            plot_df["_axis_label"] = plot_df[axis_label_column].astype(str)
+            x_label = axis_label_column
+        elif join_columns:
             sort_cols = join_columns + ["_plot_actual"]
             plot_df = plot_df.sort_values(sort_cols)
-            plot_df["_join_label"] = (
+            plot_df["_axis_label"] = (
                 plot_df[join_columns].astype(str).agg(" | ".join, axis=1)
             )
             x_label = " | ".join(join_columns)
         else:
             plot_df = plot_df.sort_index()
-            plot_df["_join_label"] = plot_df.index.astype(str)
+            plot_df["_axis_label"] = plot_df.index.astype(str)
             x_label = "Row index"
 
         filtered_df = plot_df[valid_mask].copy()
@@ -112,7 +128,7 @@ class AnalysisPlotter:
         ax.set_xlabel(x_label)
         ax.set_ylabel(target_column)
         ax.set_title("Query Data vs Predicted Values")
-        join_labels = filtered_df["_join_label"].tolist()
+        join_labels = filtered_df["_axis_label"].tolist()
         tick_indices = self._select_tick_indices(record_count)
         tick_positions = [x_positions[idx] for idx in tick_indices]
         tick_labels = [join_labels[idx] for idx in tick_indices]

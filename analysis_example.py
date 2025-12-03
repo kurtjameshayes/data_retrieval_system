@@ -205,6 +205,7 @@ def main():
             join_on=args.join_on,
             target_column=args.target_column,
             analysis_payload=analysis["analysis"],
+            feature_column=args.feature_columns[0] if args.feature_columns else None,
         )
         if plot_displayed:
             print("\nPlot displayed using matplotlib.")
