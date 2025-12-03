@@ -242,23 +242,96 @@ class CensusConnector(BaseConnector):
         if not result:
             return result
         
+        # Capture the dataset for metadata bookkeeping and human-readable notes.
         dataset = self._extract_dataset_from_context(context)
         
-        column_order = self._collect_column_names(result)
-        if not column_order:
-            return result
+        # Determine the columns we need to rename. Prefer the declared schema, fall back
+        # to the first record when no schema is present.
+        schema = result.get("schema")
+        schema_fields = []
+        if isinstance(schema, dict):
+            fields = schema.get("fields")
+            if isinstance(fields, list):
+                schema_fields = [field for field in fields if isinstance(field, dict)]
+        column_names = [
+            field.get("name") for field in schema_fields if field.get("name")
+        ]
+        if not column_names:
+            records = result.get("data")
+            if isinstance(records, dict):
+                records = records.get("data")
+            if not isinstance(records, list):
+                records = []
+            first_record = next(
+                (record for record in records if isinstance(record, dict) and record),
+                None,
+            )
+            if not first_record:
+                return result
+            column_names = list(first_record.keys())
         
-        description_map = self._attribute_repository.get_descriptions(column_order)
+        # Fetch friendly descriptions. If nothing is returned we can stop early.
+        description_map = self._attribute_repository.get_descriptions(column_names)
         if not description_map:
             return result
         
-        rename_map = self._build_final_name_map(column_order, description_map)
+        # Build the rename map while keeping column order intact and avoiding collisions.
+        used_names: Set[str] = set(column_names)
+        rename_map: Dict[str, str] = {}
+        for code in column_names:
+            description = (description_map.get(code) or "").strip()
+            if not description:
+                continue
+            final_name = self._dedupe_column_name(description, code, used_names)
+            if final_name == code:
+                continue
+            rename_map[code] = final_name
+            used_names.add(final_name)
+        
         if not rename_map:
             return result
         
-        self._rename_records(result.get("data"), rename_map)
-        self._rename_schema(result.get("schema"), rename_map)
-        self._record_metadata_overrides(result, rename_map, description_map, dataset)
+        # Rename every record in-place so downstream DataFrame builders see the
+        # human-friendly columns.
+        records = result.get("data")
+        if isinstance(records, dict):
+            records = records.get("data")
+        if isinstance(records, list):
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                for original, friendly in rename_map.items():
+                    if original in record:
+                        record[friendly] = record.pop(original)
+        
+        # Keep schema definitions aligned with the renamed records when possible.
+        for field in schema_fields:
+            original_name = field.get("name")
+            if original_name in rename_map:
+                field["name"] = rename_map[original_name]
+        
+        # Record metadata so UI layers can explain where the names came from.
+        metadata = result.setdefault("metadata", {})
+        overrides = metadata.setdefault("column_name_overrides", {})
+        overrides.update(rename_map)
+        metadata.setdefault("column_description_source", "attr_name")
+        metadata.setdefault("attribute_descriptions", {})
+        metadata["attribute_descriptions"].update({
+            code: description_map.get(code)
+            for code in rename_map.keys()
+            if description_map.get(code)
+        })
+        if dataset:
+            metadata.setdefault("dataset", dataset)
+        metadata.setdefault("notes", [])
+        note = (
+            f"Column names sourced from attr_name for dataset '{dataset}'"
+            if dataset
+            else "Column names sourced from attr_name"
+        )
+        if note not in metadata["notes"]:
+            metadata["notes"].append(note)
+        
         return result
     
     def _extract_dataset_from_context(self, context: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -273,39 +346,6 @@ class CensusConnector(BaseConnector):
         stored_query = context.get("stored_query") or {}
         stored_params = stored_query.get("parameters") or {}
         return stored_params.get("dataset")
-    
-    def _collect_column_names(self, result: Dict[str, Any]) -> List[str]:
-        schema = result.get("schema", {})
-        fields = schema.get("fields", []) if isinstance(schema, dict) else []
-        columns = [field.get("name") for field in fields if isinstance(field, dict) and field.get("name")]
-        
-        if not columns:
-            records = result.get("data") or []
-            if records and isinstance(records, list):
-                first_record = next((r for r in records if isinstance(r, dict)), {})
-                columns = list(first_record.keys())
-        
-        return columns
-    
-    def _build_final_name_map(self, column_order: List[str], description_map: Dict[str, str]) -> Dict[str, str]:
-        rename_candidates = [name for name in column_order if name in description_map]
-        if not rename_candidates:
-            return {}
-        
-        stable_columns = [name for name in column_order if name not in description_map]
-        used_names = set(stable_columns)
-        final_map: Dict[str, str] = {}
-        
-        for code in rename_candidates:
-            description = (description_map.get(code) or "").strip()
-            if not description:
-                continue
-            
-            final_name = self._dedupe_column_name(description, code, used_names)
-            used_names.add(final_name)
-            final_map[code] = final_name
-        
-        return final_map
     
     def _dedupe_column_name(self, candidate: str, code: str, used_names: set) -> str:
         if candidate not in used_names:
@@ -322,61 +362,6 @@ class CensusConnector(BaseConnector):
                 return alt
             suffix += 1
     
-    def _rename_records(self, records: Optional[List[Dict[str, Any]]], rename_map: Dict[str, str]):
-        if not records or not isinstance(records, list):
-            return
-        
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            updated = {}
-            for key, value in record.items():
-                new_key = rename_map.get(key, key)
-                updated[new_key] = value
-            record.clear()
-            record.update(updated)
-    
-    def _rename_schema(self, schema: Optional[Dict[str, Any]], rename_map: Dict[str, str]):
-        if not schema or not isinstance(schema, dict):
-            return
-        
-        fields = schema.get("fields")
-        if not fields or not isinstance(fields, list):
-            return
-        
-        for field in fields:
-            if not isinstance(field, dict):
-                continue
-            name = field.get("name")
-            if name in rename_map:
-                field["name"] = rename_map[name]
-    
-    def _record_metadata_overrides(
-        self,
-        result: Dict[str, Any],
-        rename_map: Dict[str, str],
-        description_map: Dict[str, str],
-        dataset: Optional[str],
-    ):
-        metadata = result.setdefault("metadata", {})
-        overrides = metadata.setdefault("column_name_overrides", {})
-        overrides.update(rename_map)
-        metadata.setdefault("column_description_source", "attr_name")
-        if dataset:
-            metadata.setdefault("dataset", dataset)
-        metadata.setdefault("attribute_descriptions", {})
-        metadata["attribute_descriptions"].update({
-            code: description_map.get(code)
-            for code in rename_map.keys()
-            if description_map.get(code)
-        })
-        metadata.setdefault("notes", [])
-        if dataset:
-            note = f"Column names sourced from attr_name for dataset '{dataset}'"
-        else:
-            note = "Column names sourced from attr_name"
-        if note not in metadata["notes"]:
-            metadata["notes"].append(note)
 
 
 class CensusAttributeNameRepository:
