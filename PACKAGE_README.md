@@ -322,7 +322,7 @@ CACHE_TTL=3600
 USDA_NASS_API_KEY=your-key
 CENSUS_API_KEY=your-key
 FBI_CRIME_API_KEY=your-key
-FBI_CRIME_API_URL=https://api.usa.gov/crime/fbi/sapi
+FBI_CRIME_API_URL=https://api.usa.gov/crime/fbi/cde
 ```
 
 ### MongoDB Collections

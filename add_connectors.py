@@ -118,7 +118,7 @@ CONNECTOR_CONFIGS = [
         "source_id": "fbi_crime",
         "source_name": "FBI Crime Data Explorer",
         "connector_type": "fbi_crime",
-        "url": "https://api.usa.gov/crime/fbi/sapi",
+        "url": "https://api.usa.gov/crime/fbi/cde",
         "api_key": "iSNiIUIPpFPIanf4l9DdCDPZZK7yppVF0tlviXy3",
         "format": "JSON",
         "active": True,

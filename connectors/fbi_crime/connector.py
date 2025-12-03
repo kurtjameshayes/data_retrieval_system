@@ -9,7 +9,7 @@ API Documentation: https://crime-data-explorer.fr.cloud.gov/pages/docApi
 
 import requests
 import time
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from core.base_connector import BaseConnector
 import logging
 
@@ -39,12 +39,16 @@ class FBICrimeConnector(BaseConnector):
                 - format: Response format (default: JSON)
         """
         super().__init__(config)
-        self.base_url = config.get('url', 'https://api.usa.gov/crime/fbi/sapi')
+        self.base_url = config.get('url', 'https://api.usa.gov/crime/fbi/cde').rstrip('/')
         self.api_key = config.get('api_key')
         self.format = config.get('format', 'JSON').upper()
         self.session = None
         self.max_retries = config.get('max_retries', 3)
         self.retry_delay = config.get('retry_delay', 1)
+        legacy_flag = config.get('legacy_endpoint_style')
+        if legacy_flag is None:
+            legacy_flag = 'sapi' in self.base_url
+        self.legacy_endpoint_style = legacy_flag
         
     def connect(self) -> bool:
         """
@@ -60,9 +64,12 @@ class FBICrimeConnector(BaseConnector):
             })
             
             # Test connection with a simple request
-            test_url = f"{self.base_url}/api/estimates/national/2020/2020"
-            params = {'api_key': self.api_key}
-            
+            test_url, params = self._prepare_request(
+                endpoint='estimates/national',
+                from_year='2020',
+                to_year='2020',
+                extra_params={}
+            )
             response = self.session.get(test_url, params=params, timeout=10)
             response.raise_for_status()
             
@@ -116,22 +123,15 @@ class FBICrimeConnector(BaseConnector):
         
         try:
             endpoint = parameters.get('endpoint', 'estimates/national')
-            from_year = parameters.get('from', '2020')
-            to_year = parameters.get('to', '2020')
-            
-            # Build URL - FBI Crime Data API structure: /api/{endpoint}/{from_year}/{to_year}
-            if endpoint.startswith('api/'):
-                url = f"{self.base_url}/{endpoint}/{from_year}/{to_year}"
-            else:
-                url = f"{self.base_url}/api/{endpoint}/{from_year}/{to_year}"
-            
-            # Build query parameters
-            params = {'api_key': self.api_key}
-            
-            # Add other parameters (excluding endpoint, from, to which are in URL)
-            for key, value in parameters.items():
-                if key not in ['endpoint', 'from', 'to', 'api_key']:
-                    params[key] = value
+            from_year = parameters.get('from') or parameters.get('from_year')
+            to_year = parameters.get('to') or parameters.get('to_year')
+
+            url, params = self._prepare_request(
+                endpoint=endpoint,
+                from_year=from_year,
+                to_year=to_year,
+                extra_params=parameters
+            )
             
             # Execute request with retry logic
             response = self._execute_with_retry(url, params)
@@ -197,6 +197,47 @@ class FBICrimeConnector(BaseConnector):
                     logger.error(f"Request failed after {self.max_retries} attempts")
         
         raise last_exception
+    
+    def _prepare_request(
+        self,
+        endpoint: str,
+        from_year: Optional[str],
+        to_year: Optional[str],
+        extra_params: Dict[str, Any]
+    ) -> Tuple[str, Dict[str, Any]]:
+        """
+        Build the request URL and query parameters for either the legacy SAPI
+        endpoints or the newer CDE endpoints.
+        """
+        endpoint = (endpoint or 'estimates/national').strip('/')
+        path_segments = [self.base_url.rstrip('/')]
+        
+        if self.legacy_endpoint_style and not endpoint.startswith('api/'):
+            path_segments.append('api')
+        
+        path_segments.append(endpoint)
+        url = '/'.join(segment.strip('/') for segment in path_segments if segment)
+        
+        params: Dict[str, Any] = {'api_key': self.api_key}
+        
+        # Legacy endpoints expect years in the path
+        if self.legacy_endpoint_style:
+            start_year = from_year or to_year
+            end_year = to_year or from_year
+            if start_year:
+                url = f"{url}/{start_year}/{end_year or start_year}"
+        else:
+            if from_year:
+                params['from_year'] = from_year
+            if to_year:
+                params['to_year'] = to_year
+        
+        for key, value in extra_params.items():
+            if key in {'endpoint', 'from', 'to', 'from_year', 'to_year', 'api_key'}:
+                continue
+            params[key] = value
+        
+        return url, params
     
     def validate(self) -> bool:
         """

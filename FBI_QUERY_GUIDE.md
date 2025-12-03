@@ -96,27 +96,25 @@ Get crime estimates for California
 ```
 **Returns:** State-level crime statistics for California
 
-### Example 3: Texas Violent Crime Estimates
-Get violent crime estimates for Texas
+### Example 3: Texas Violent Crime Counts
+Get statewide violent crime counts for Texas for a reporting year
 ```python
 {
-    "endpoint": "estimates/states/TX/violent-crime",
-    "from": "2018",
-    "to": "2021"
+    "endpoint": "offenses/count/states/TX/violent-crime",
+    "year": "2021"
 }
 ```
-**Returns:** Violent crime data specifically for Texas
+**Returns:** Violent crime totals reported by Texas agencies
 
-### Example 4: New York Property Crime
-Get property crime estimates for New York
+### Example 4: New York Property Crime Counts
+Get statewide property crime counts for New York
 ```python
 {
-    "endpoint": "estimates/states/NY/property-crime",
-    "from": "2018",
-    "to": "2021"
+    "endpoint": "offenses/count/states/NY/property-crime",
+    "year": "2021"
 }
 ```
-**Returns:** Property crime statistics for New York state
+**Returns:** Property crime totals for New York for the selected year
 
 ### Example 5: Illinois Crime - Recent Year
 Get all crime estimates for Illinois for recent year
@@ -129,16 +127,16 @@ Get all crime estimates for Illinois for recent year
 ```
 **Returns:** Complete crime statistics for Illinois for 2020
 
-### Example 6: Florida Violent Crime - Multi-Year
-Get violent crime trend for Florida
+### Example 6: Florida Statewide Trend
+Get multi-year statewide estimates for Florida
 ```python
 {
-    "endpoint": "estimates/states/FL/violent-crime",
+    "endpoint": "estimates/states/FL",
     "from": "2017",
     "to": "2021"
 }
 ```
-**Returns:** 5-year trend of violent crime in Florida
+**Returns:** 5-year statewide estimate trend for Florida
 
 ### Example 7: Washington State Crime Estimates
 Get crime estimates for Washington state
@@ -151,16 +149,16 @@ Get crime estimates for Washington state
 ```
 **Returns:** Crime statistics for Washington state
 
-### Example 8: Pennsylvania Property Crime Trend
-Get property crime trend for Pennsylvania
+### Example 8: Pennsylvania Statewide Estimates
+Get multi-year statewide estimates for Pennsylvania
 ```python
 {
-    "endpoint": "estimates/states/PA/property-crime",
+    "endpoint": "estimates/states/PA",
     "from": "2016",
     "to": "2021"
 }
 ```
-**Returns:** 6-year property crime trend for Pennsylvania
+**Returns:** 6-year statewide estimate trend for Pennsylvania
 
 ## Sample Output
 
@@ -224,8 +222,8 @@ Record 2:
 - Examples:
   - `"estimates/national"` - National estimates
   - `"estimates/states/CA"` - California estimates
-  - `"estimates/states/TX/violent-crime"` - Texas violent crime
-  - `"estimates/states/NY/property-crime"` - New York property crime
+  - `"offenses/count/states/TX/violent-crime"` - Texas violent crime counts
+  - `"offenses/count/states/NY/property-crime"` - New York property crime counts
 
 ### Optional Parameters
 
@@ -236,6 +234,10 @@ Record 2:
 **to** - End year
 - Format: `"2021"` (4-digit year as string)
 - Determines the end of the time range
+
+**year** - Reporting year for offense-count endpoints
+- Format: `"2021"`
+- Used with `"offenses/count/..."`
 
 ## Available Endpoints
 
@@ -251,17 +253,11 @@ Returns national crime estimates for all crime types
 ```
 Returns all crime data for specified state
 
-### State Violent Crime
+### State Offense Counts
 ```python
-"endpoint": "estimates/states/{STATE_ABBR}/violent-crime"
+"endpoint": "offenses/count/states/{STATE_ABBR}/{metric}"
 ```
-Returns only violent crime data for specified state
-
-### State Property Crime
-```python
-"endpoint": "estimates/states/{STATE_ABBR}/property-crime"
-```
-Returns only property crime data for specified state
+Returns year-specific totals for a metric such as `violent-crime`, `property-crime`, `robbery`, etc.
 
 ## Crime Categories
 
@@ -315,16 +311,14 @@ Run separate queries for each state:
 ```python
 # California
 {
-    "endpoint": "estimates/states/CA/violent-crime",
-    "from": "2018",
-    "to": "2021"
+    "endpoint": "offenses/count/states/CA/violent-crime",
+    "year": "2021"
 }
 
 # Texas
 {
-    "endpoint": "estimates/states/TX/violent-crime",
-    "from": "2018",
-    "to": "2021"
+    "endpoint": "offenses/count/states/TX/violent-crime",
+    "year": "2021"
 }
 ```
 
@@ -377,13 +371,13 @@ Then enter your parameters in JSON format:
 
 ```json
 {
-    "endpoint": "estimates/states/CA/violent-crime",
+    "endpoint": "estimates/states/CA",
     "from": "2015",
     "to": "2021"
 }
 ```
 
-This queries for violent crime trends in California from 2015-2021.
+This queries for statewide crime trends in California from 2015-2021.
 
 ## Troubleshooting
 
@@ -412,7 +406,7 @@ curl -X PUT http://localhost:5000/api/v1/sources/fbi_crime \
 ```
 
 ### "Invalid endpoint"
-- Verify endpoint format: `estimates/national` or `estimates/states/CA`
+- Verify endpoint format: `estimates/national`, `estimates/states/CA`, or `offenses/count/states/CA/violent-crime`
 - Check state abbreviation is valid (2 letters, uppercase)
 - Ensure endpoint exists in FBI Crime Data API
 
