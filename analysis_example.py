@@ -271,7 +271,7 @@ def parse_args():
     parser.add_argument(
         "--join-on",
         nargs="+",
-        default=["state", "year"],
+        default=["zip code tabulation area"],
         help="Columns shared across the saved queries used for the join",
     )
     parser.add_argument(
@@ -282,13 +282,16 @@ def parse_args():
     )
     parser.add_argument(
         "--target-column",
-        default="population",
+        default=(
+            "SEX BY EDUCATIONAL ATTAINMENT FOR THE POPULATION 25 YEARS AND OVER: "
+            "Estimate!!Total:!!Male:!!No schooling completed"
+        ),
         help="Column to predict in regression/predictive analyses",
     )
     parser.add_argument(
         "--feature-columns",
         nargs="+",
-        default=["corn_value"],
+        default=["HOUSEHOLD TYPE (INCLUDING LIVING ALONE): Estimate!!Total:"],
         help="Feature columns used for modeling",
     )
     return parser.parse_args()
