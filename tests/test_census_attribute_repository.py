@@ -14,6 +14,11 @@ class FakeCollection:
             if not query or self._matches(doc, query):
                 yield doc
     
+    def find_one(self, query):
+        for doc in self.find(query):
+            return doc
+        return None
+    
     def _matches(self, doc, query):
         if not query:
             return True
@@ -52,12 +57,11 @@ def _make_repo(docs):
     return repo
 
 
-def test_repository_matches_attribute_code_when_attr_id_differs():
-    docs = [{
-        "attr_id": "random_id",
-        "attribute_code": "B22010_001E",
-        "description": "Total households",
-    }]
+def test_repository_returns_first_matching_variable_code():
+    docs = [
+        {"variable_code": "B22010_001E", "description": "Total households"},
+        {"variable_code": "B22010_001E", "description": "Duplicate"},
+    ]
     repo = _make_repo(docs)
     
     mapping = repo.get_descriptions(["B22010_001E"])
@@ -65,39 +69,21 @@ def test_repository_matches_attribute_code_when_attr_id_differs():
     assert mapping == {"B22010_001E": "Total households"}
 
 
-def test_repository_collects_multiple_matching_fields_once():
+def test_repository_handles_case_and_whitespace_matches():
     docs = [{
-        "attr_id": "something_else",
-        "attribute_code": "B22010_002E",
-        "code": "B22010_002E",
+        "variable_code": "  b22010_002e ",
         "label": "SNAP households",
     }]
     repo = _make_repo(docs)
     
-    mapping = repo.get_descriptions(["B22010_002E", "NAME"])
+    mapping = repo.get_descriptions(["B22010_002E"])
     
     assert mapping == {"B22010_002E": "SNAP households"}
 
 
-def test_repository_handles_codes_with_trailing_whitespace():
-    docs = [{
-        "attribute_code": "B22010_003E   ",
-        "description": "Households with whitespace",
-    }]
-    repo = _make_repo(docs)
+def test_repository_returns_empty_when_not_found():
+    repo = _make_repo([])
     
-    mapping = repo.get_descriptions(["B22010_003E"])
+    mapping = repo.get_descriptions(["B01001_999Z"])
     
-    assert mapping == {"B22010_003E": "Households with whitespace"}
-
-
-def test_repository_handles_case_insensitive_codes():
-    docs = [{
-        "attribute_code": "b22010_004e",
-        "long_name": "Case insensitive households",
-    }]
-    repo = _make_repo(docs)
-    
-    mapping = repo.get_descriptions(["B22010_004E"])
-    
-    assert mapping == {"B22010_004E": "Case insensitive households"}
+    assert mapping == {}
