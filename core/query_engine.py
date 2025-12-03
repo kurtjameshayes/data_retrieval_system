@@ -444,15 +444,18 @@ class QueryEngine:
         if not isinstance(overrides, dict):
             return df
 
+        rename_map = {}
         for original, friendly in overrides.items():
             if (
-                not isinstance(original, str)
-                or not isinstance(friendly, str)
-                or original in df.columns
-                or friendly not in df.columns
+                isinstance(original, str)
+                and isinstance(friendly, str)
+                and original in df.columns
+                and friendly not in df.columns
             ):
-                continue
-            df[original] = df[friendly]
+                rename_map[original] = friendly
+
+        if rename_map:
+            df = df.rename(columns=rename_map)
 
         return df
 
