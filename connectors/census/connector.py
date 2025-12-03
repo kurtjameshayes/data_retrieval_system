@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from typing import Dict, Any, List, Optional, Set
 
@@ -436,23 +437,55 @@ class CensusAttributeNameRepository:
             return mapping
         
         code_set: Set[str] = set(normalized_codes)
+        code_lookup: Dict[str, str] = {code.lower(): code for code in code_set}
         query = self._build_code_query(list(code_set))
-        if not query:
+        if query:
+            try:
+                self._consume_query_results(query, code_lookup, mapping)
+            except Exception as exc:
+                logger.warning(
+                    "Failed loading attr_name codes %s: %s",
+                    codes,
+                    str(exc),
+                )
+        
+        remaining = {code for code in code_set if not mapping.get(code)}
+        if not remaining:
             return mapping
         
-        try:
-            cursor = self._collection.find(query)
-            for doc in cursor:
-                matches = self._extract_matching_codes(doc, code_set)
-                if not matches:
-                    continue
-                
-                description = self._extract_description(doc)
-                for match in matches:
-                    mapping.setdefault(match, description)
-        except Exception as exc:
-            logger.warning("Failed loading attr_name codes %s: %s", codes, str(exc))
+        for code in remaining:
+            regex_query = self._build_regex_code_query(code)
+            if not regex_query:
+                continue
+            try:
+                self._consume_query_results(regex_query, code_lookup, mapping)
+            except Exception as exc:
+                logger.warning(
+                    "Failed relaxed attr_name lookup for %s: %s",
+                    code,
+                    str(exc),
+                )
         return mapping
+    
+    def _consume_query_results(
+        self,
+        query: Optional[Dict[str, Any]],
+        code_lookup: Dict[str, str],
+        mapping: Dict[str, Optional[str]],
+    ) -> None:
+        if not query:
+            return
+        
+        cursor = self._collection.find(query)
+        for doc in cursor:
+            matches = self._extract_matching_codes(doc, code_lookup)
+            if not matches:
+                continue
+            
+            description = self._extract_description(doc)
+            for match in matches:
+                if match not in mapping or not mapping[match]:
+                    mapping[match] = description
     
     def _build_code_query(self, codes: List[str]) -> Optional[Dict[str, Any]]:
         clauses = [{field: {"$in": codes}} for field in self._CODE_FIELDS]
@@ -460,16 +493,39 @@ class CensusAttributeNameRepository:
             return None
         return {"$or": clauses}
     
+    def _build_regex_code_query(self, code: str) -> Optional[Dict[str, Any]]:
+        if not code:
+            return None
+        
+        pattern = rf"^\s*{re.escape(code)}\s*$"
+        clauses = [
+            {field: {"$regex": pattern, "$options": "i"}}
+            for field in self._CODE_FIELDS
+        ]
+        if not clauses:
+            return None
+        return {"$or": clauses}
+    
     @staticmethod
-    def _extract_matching_codes(doc: Dict[str, Any], code_set: Set[str]) -> List[str]:
+    def _extract_matching_codes(doc: Dict[str, Any], code_lookup: Dict[str, str]) -> List[str]:
         matches: List[str] = []
         for key in ("attr_id", "attribute_id", "attribute_code", "code", "variable", "name"):
             value = doc.get(key)
-            if not isinstance(value, str):
+            if isinstance(value, str):
+                candidates = [value]
+            elif isinstance(value, (list, tuple, set)):
+                candidates = [item for item in value if isinstance(item, str)]
+            else:
                 continue
-            candidate = value.strip()
-            if candidate and candidate in code_set:
-                matches.append(candidate)
+            
+            for candidate_value in candidates:
+                candidate = candidate_value.strip()
+                if not candidate:
+                    continue
+                
+                resolved = code_lookup.get(candidate.lower())
+                if resolved:
+                    matches.append(resolved)
         return matches
     
     @staticmethod
