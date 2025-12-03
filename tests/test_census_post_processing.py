@@ -1,5 +1,7 @@
 import copy
 
+import pandas as pd
+
 from connectors.census.connector import CensusConnector
 from core.base_connector import BaseConnector
 from core.query_engine import QueryEngine
@@ -26,73 +28,105 @@ class DummyStoredQuery:
         return []
 
 
-def test_census_connector_process_query_result_replaces_codes():
-    connector = CensusConnector({"source_id": "census_api", "source_name": "Census"})
-    connector._attribute_repository = FakeAttrRepo({
-        "B22010_001E": "Total households",
-        "B22010_002E": "SNAP households",
-    })
+class TestCensusConnectorProcessQueryResult:
+    @staticmethod
+    def _build_connector(mapping):
+        connector = CensusConnector({"source_id": "census_api", "source_name": "Census"})
+        connector._attribute_repository = FakeAttrRepo(mapping)
+        return connector
     
-    result = {
-        "metadata": {},
-        "data": [
-            {"NAME": "ZCTA 12345", "B22010_001E": "10", "B22010_002E": "5"},
-        ],
-        "schema": {
-            "fields": [
-                {"name": "NAME", "type": "string"},
-                {"name": "B22010_001E", "type": "string"},
-                {"name": "B22010_002E", "type": "string"},
-            ]
-        },
-    }
-    context = {"parameters": {"dataset": "2022/acs/acs5"}}
+    def test_replaces_codes(self):
+        connector = self._build_connector({
+            "B22010_001E": "Total households",
+            "B22010_002E": "SNAP households",
+        })
+        
+        result = {
+            "metadata": {},
+            "data": [
+                {"NAME": "ZCTA 12345", "B22010_001E": "10", "B22010_002E": "5"},
+            ],
+            "schema": {
+                "fields": [
+                    {"name": "NAME", "type": "string"},
+                    {"name": "B22010_001E", "type": "string"},
+                    {"name": "B22010_002E", "type": "string"},
+                ]
+            },
+        }
+        context = {"parameters": {"dataset": "2022/acs/acs5"}}
+        
+        processed = connector.process_query_result(copy.deepcopy(result), context)
+        
+        record = processed["data"][0]
+        assert "Total households" in record
+        assert "SNAP households" in record
+        assert "B22010_001E" not in record
+        
+        fields = processed["schema"]["fields"]
+        assert any(field["name"] == "Total households" for field in fields)
+        assert any(field["name"] == "SNAP households" for field in fields)
+        
+        overrides = processed["metadata"]["column_name_overrides"]
+        assert overrides["B22010_001E"] == "Total households"
+        assert overrides["B22010_002E"] == "SNAP households"
     
-    processed = connector.process_query_result(copy.deepcopy(result), context)
+    def test_without_dataset_context(self):
+        connector = self._build_connector({
+            "B19013_001E": "Median household income",
+        })
+        
+        result = {
+            "metadata": {},
+            "data": [
+                {"NAME": "ZCTA 67890", "B19013_001E": "72000"},
+            ],
+            "schema": {
+                "fields": [
+                    {"name": "NAME", "type": "string"},
+                    {"name": "B19013_001E", "type": "string"},
+                ]
+            },
+        }
+        
+        processed = connector.process_query_result(copy.deepcopy(result), context={})
+        
+        record = processed["data"][0]
+        assert "Median household income" in record
+        assert "B19013_001E" not in record
+        
+        metadata = processed["metadata"]
+        assert metadata["column_name_overrides"]["B19013_001E"] == "Median household income"
+        assert "dataset" not in metadata
+        assert "Column names sourced from attr_name" in metadata["notes"]
     
-    record = processed["data"][0]
-    assert "Total households" in record
-    assert "SNAP households" in record
-    assert "B22010_001E" not in record
-    
-    fields = processed["schema"]["fields"]
-    assert any(field["name"] == "Total households" for field in fields)
-    assert any(field["name"] == "SNAP households" for field in fields)
-    
-    overrides = processed["metadata"]["column_name_overrides"]
-    assert overrides["B22010_001E"] == "Total households"
-    assert overrides["B22010_002E"] == "SNAP households"
-
-
-def test_census_connector_process_query_result_without_dataset_context():
-    connector = CensusConnector({"source_id": "census_api", "source_name": "Census"})
-    connector._attribute_repository = FakeAttrRepo({
-        "B19013_001E": "Median household income",
-    })
-    
-    result = {
-        "metadata": {},
-        "data": [
-            {"NAME": "ZCTA 67890", "B19013_001E": "72000"},
-        ],
-        "schema": {
-            "fields": [
-                {"name": "NAME", "type": "string"},
-                {"name": "B19013_001E", "type": "string"},
-            ]
-        },
-    }
-    
-    processed = connector.process_query_result(copy.deepcopy(result), context={})
-    
-    record = processed["data"][0]
-    assert "Median household income" in record
-    assert "B19013_001E" not in record
-    
-    metadata = processed["metadata"]
-    assert metadata["column_name_overrides"]["B19013_001E"] == "Median household income"
-    assert "dataset" not in metadata
-    assert "Column names sourced from attr_name" in metadata["notes"]
+    def test_dataframe_reflects_renamed_columns(self):
+        connector = self._build_connector({
+            "B01001_001E": "Total population",
+        })
+        
+        result = {
+            "metadata": {},
+            "data": [
+                {"NAME": "ZCTA 54321", "B01001_001E": "100"},
+            ],
+            "schema": {
+                "fields": [
+                    {"name": "NAME", "type": "string"},
+                    {"name": "B01001_001E", "type": "string"},
+                ]
+            },
+        }
+        
+        processed = connector.process_query_result(
+            copy.deepcopy(result),
+            context={"parameters": {"dataset": "2021/acs/acs5"}},
+        )
+        
+        dataframe = pd.DataFrame(processed["data"])
+        assert "Total population" in dataframe.columns
+        assert "B01001_001E" not in dataframe.columns
+        assert dataframe.loc[0, "Total population"] == "100"
 
 class StubConnector(BaseConnector):
     def __init__(self):
