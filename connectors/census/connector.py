@@ -371,15 +371,6 @@ class CensusAttributeNameRepository:
     to their human-readable descriptions.
     """
     
-    _CODE_FIELDS = (
-        "attr_id",
-        "attribute_id",
-        "attribute_code",
-        "code",
-        "variable",
-        "name",
-    )
-    
     def __init__(self):
         self._client = MongoClient(Config.MONGO_URI)
         self._collection = self._client[Config.DATABASE_NAME]["attr_name"]
@@ -387,10 +378,9 @@ class CensusAttributeNameRepository:
     
     def get_descriptions(self, attribute_codes: List[str]) -> Dict[str, str]:
         """
-        Retrieve descriptions for the provided Census variable codes.
-        
-        The attr_name collection may contain multiple datasets, but lookups
-        only consider the variable code to ensure the widest possible match.
+        Retrieve descriptions for the provided Census variable codes by looking
+        up the first attr_name record whose variable_code matches the
+        attribute_code we are trying to label.
         """
         normalized = [
             code.strip()
@@ -401,132 +391,48 @@ class CensusAttributeNameRepository:
             return {}
         
         descriptions: Dict[str, str] = {}
-        missing: List[str] = []
-        
         for code in normalized:
             if code in descriptions:
                 continue
             
             if code in self._cache:
-                cached = self._cache[code]
-                if cached:
-                    descriptions[code] = cached
+                description = self._cache[code]
             else:
-                missing.append(code)
-        
-        if missing:
-            pending_codes = list(dict.fromkeys(missing))
-            fetched = self._load_by_codes(pending_codes)
-            for code, description in fetched.items():
+                description = self._lookup_description_by_variable_code(code)
                 self._cache[code] = description
-                if description:
-                    descriptions[code] = description
             
-            for code in pending_codes:
-                self._cache.setdefault(code, fetched.get(code))
+            if description:
+                descriptions[code] = description
         
         return descriptions
     
-    def _load_by_codes(self, codes: List[str]) -> Dict[str, Optional[str]]:
-        mapping: Dict[str, Optional[str]] = {}
-        if not codes:
-            return mapping
-        
-        normalized_codes = [code.strip() for code in codes if isinstance(code, str) and code.strip()]
-        if not normalized_codes:
-            return mapping
-        
-        code_set: Set[str] = set(normalized_codes)
-        code_lookup: Dict[str, str] = {code.lower(): code for code in code_set}
-        query = self._build_code_query(list(code_set))
-        if query:
-            try:
-                self._consume_query_results(query, code_lookup, mapping)
-            except Exception as exc:
-                logger.warning(
-                    "Failed loading attr_name codes %s: %s",
-                    codes,
-                    str(exc),
-                )
-        
-        remaining = {code for code in code_set if not mapping.get(code)}
-        if not remaining:
-            return mapping
-        
-        for code in remaining:
-            regex_query = self._build_regex_code_query(code)
-            if not regex_query:
-                continue
-            try:
-                self._consume_query_results(regex_query, code_lookup, mapping)
-            except Exception as exc:
-                logger.warning(
-                    "Failed relaxed attr_name lookup for %s: %s",
-                    code,
-                    str(exc),
-                )
-        return mapping
-    
-    def _consume_query_results(
-        self,
-        query: Optional[Dict[str, Any]],
-        code_lookup: Dict[str, str],
-        mapping: Dict[str, Optional[str]],
-    ) -> None:
-        if not query:
-            return
-        
-        cursor = self._collection.find(query)
-        for doc in cursor:
-            matches = self._extract_matching_codes(doc, code_lookup)
-            if not matches:
-                continue
-            
-            description = self._extract_description(doc)
-            for match in matches:
-                if match not in mapping or not mapping[match]:
-                    mapping[match] = description
-    
-    def _build_code_query(self, codes: List[str]) -> Optional[Dict[str, Any]]:
-        clauses = [{field: {"$in": codes}} for field in self._CODE_FIELDS]
-        if not clauses:
-            return None
-        return {"$or": clauses}
-    
-    def _build_regex_code_query(self, code: str) -> Optional[Dict[str, Any]]:
+    def _lookup_description_by_variable_code(self, code: str) -> Optional[str]:
         if not code:
             return None
         
         pattern = rf"^\s*{re.escape(code)}\s*$"
-        clauses = [
-            {field: {"$regex": pattern, "$options": "i"}}
-            for field in self._CODE_FIELDS
+        queries = [
+            {"variable_code": code},
+            {"variable_code": {"$regex": pattern, "$options": "i"}},
         ]
-        if not clauses:
-            return None
-        return {"$or": clauses}
-    
-    @staticmethod
-    def _extract_matching_codes(doc: Dict[str, Any], code_lookup: Dict[str, str]) -> List[str]:
-        matches: List[str] = []
-        for key in ("attr_id", "attribute_id", "attribute_code", "code", "variable", "name"):
-            value = doc.get(key)
-            if isinstance(value, str):
-                candidates = [value]
-            elif isinstance(value, (list, tuple, set)):
-                candidates = [item for item in value if isinstance(item, str)]
-            else:
-                continue
+        
+        for query in queries:
+            try:
+                doc = self._collection.find_one(query)
+            except Exception as exc:
+                logger.warning(
+                    "Failed attr_name lookup for %s using %s: %s",
+                    code,
+                    query,
+                    str(exc),
+                )
+                return None
             
-            for candidate_value in candidates:
-                candidate = candidate_value.strip()
-                if not candidate:
-                    continue
-                
-                resolved = code_lookup.get(candidate.lower())
-                if resolved:
-                    matches.append(resolved)
-        return matches
+            if doc:
+                description = self._extract_description(doc)
+                if description:
+                    return description
+        return None
     
     @staticmethod
     def _extract_description(doc: Dict[str, Any]) -> Optional[str]:
