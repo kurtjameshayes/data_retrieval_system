@@ -1,9 +1,15 @@
 from pymongo import MongoClient
+from pymongo.errors import DocumentTooLarge
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from config import Config
+from bson import BSON
 import hashlib
 import json
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 class QueryResult:
     """
@@ -15,6 +21,9 @@ class QueryResult:
             db_client = MongoClient(Config.MONGO_URI)
         self.db = db_client[Config.DATABASE_NAME]
         self.collection = self.db.query_results
+        self.max_document_bytes = getattr(
+            Config, "CACHE_MAX_DOCUMENT_BYTES", 15 * 1024 * 1024
+        )
         self._create_indexes()
     
     def _create_indexes(self):
@@ -78,11 +87,21 @@ class QueryResult:
         if query_id:
             cache_entry["query_id"] = query_id
         
-        self.collection.update_one(
-            {"query_hash": query_hash},
-            {"$set": cache_entry},
-            upsert=True
-        )
+        if not self._document_fits_cache(cache_entry):
+            return query_hash
+
+        try:
+            self.collection.update_one(
+                {"query_hash": query_hash},
+                {"$set": cache_entry},
+                upsert=True
+            )
+        except DocumentTooLarge:
+            logger.warning(
+                "Cache entry for %s exceeded MongoDB size limits despite pre-check; skipping",
+                source_id,
+            )
+            return query_hash
         
         return query_hash
     
@@ -160,3 +179,29 @@ class QueryResult:
             "expired_entries": total_entries - active_entries,
             "total_hits": total_hits
         }
+
+    def _document_fits_cache(self, cache_entry: Dict[str, Any]) -> bool:
+        """
+        Determine whether a cache entry can be persisted without exceeding
+        MongoDB's document size limit or the configured safety threshold.
+        """
+        try:
+            document_size = len(BSON.encode(cache_entry))
+        except Exception as exc:
+            logger.warning(
+                "Unable to encode cache entry for %s: %s",
+                cache_entry.get("source_id"),
+                exc,
+            )
+            return False
+
+        if document_size > self.max_document_bytes:
+            logger.info(
+                "Skipping cache entry for %s – serialized size %s bytes exceeds limit %s bytes",
+                cache_entry.get("source_id"),
+                document_size,
+                self.max_document_bytes,
+            )
+            return False
+
+        return True
