@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import math
+import warnings
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import pandas as pd
+from pandas.api import types as pd_types
 
 FIG_DPI = 160
 MAX_IMAGE_DIMENSION = (1 << 16) - 2048  # Matplotlib hard limit is 2**16
@@ -65,13 +67,19 @@ class AnalysisPlotter:
 
         join_columns = [col for col in join_on if col in plot_df.columns]
         if axis_label_column:
-            sort_cols = [axis_label_column, "_plot_actual"]
-            plot_df = plot_df.sort_values(sort_cols)
+            sort_key = self._prepare_sort_key_column(plot_df, axis_label_column, "axis")
+            sort_cols = [sort_key, "_plot_actual"]
+            plot_df = plot_df.sort_values(sort_cols, na_position="last")
             plot_df["_axis_label"] = plot_df[axis_label_column].astype(str)
             x_label = axis_label_column
         elif join_columns:
-            sort_cols = join_columns + ["_plot_actual"]
-            plot_df = plot_df.sort_values(sort_cols)
+            sort_cols: List[str] = []
+            for column in join_columns:
+                sort_cols.append(
+                    self._prepare_sort_key_column(plot_df, column, f"join_{column}")
+                )
+            sort_cols.append("_plot_actual")
+            plot_df = plot_df.sort_values(sort_cols, na_position="last")
             plot_df["_axis_label"] = (
                 plot_df[join_columns].astype(str).agg(" | ".join, axis=1)
             )
@@ -221,4 +229,89 @@ class AnalysisPlotter:
             else:
                 df.drop(columns=[column_name], inplace=True)
         return prediction_columns
+
+    def _prepare_sort_key_column(
+        self,
+        dataframe: pd.DataFrame,
+        column: str,
+        context: str,
+    ) -> str:
+        """Return a column name that can be used to sort ascending by the column's values."""
+        series = dataframe[column]
+        non_null = int(series.notna().sum())
+        if non_null == 0:
+            return column
+
+        if pd_types.is_datetime64_any_dtype(series) or pd_types.is_numeric_dtype(series):
+            return column
+
+        numeric_column = self._try_convert_to_numeric(
+            dataframe, series, column, context, non_null
+        )
+        if numeric_column:
+            return numeric_column
+
+        datetime_column = self._try_convert_to_datetime(
+            dataframe, series, column, context, non_null
+        )
+        if datetime_column:
+            return datetime_column
+
+        return self._ensure_string_sort_column(dataframe, series, column, context)
+
+    def _try_convert_to_datetime(
+        self,
+        dataframe: pd.DataFrame,
+        series: pd.Series,
+        column: str,
+        context: str,
+        non_null: int,
+    ) -> Optional[str]:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                converted = pd.to_datetime(series, errors="coerce")
+        except (TypeError, ValueError):
+            return None
+
+        if int(converted.notna().sum()) == non_null:
+            column_name = self._build_sort_column_name(column, context, "dt")
+            dataframe[column_name] = converted
+            return column_name
+        return None
+
+    def _try_convert_to_numeric(
+        self,
+        dataframe: pd.DataFrame,
+        series: pd.Series,
+        column: str,
+        context: str,
+        non_null: int,
+    ) -> Optional[str]:
+        converted = pd.to_numeric(series, errors="coerce")
+        if int(converted.notna().sum()) == non_null:
+            column_name = self._build_sort_column_name(column, context, "num")
+            dataframe[column_name] = converted
+            return column_name
+        return None
+
+    def _ensure_string_sort_column(
+        self,
+        dataframe: pd.DataFrame,
+        series: pd.Series,
+        column: str,
+        context: str,
+    ) -> str:
+        column_name = self._build_sort_column_name(column, context, "str")
+        dataframe[column_name] = series.astype(str).str.lower()
+        return column_name
+
+    @staticmethod
+    def _build_sort_column_name(column: str, context: str, kind: str) -> str:
+        def sanitize(value: str) -> str:
+            return "".join(ch if ch.isalnum() else "_" for ch in value)
+
+        safe_context = sanitize(context or "axis")
+        safe_column = sanitize(str(column))
+        return f"_sort_{safe_context}_{safe_column}_{kind}"
 
