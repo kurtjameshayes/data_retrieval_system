@@ -65,6 +65,7 @@ class DataAnalysisEngine:
             if not col_x or not col_y:
                 raise ValueError("comparisons entries require 'x' and 'y' keys")
 
+            self._require_columns(df, [col_x, col_y], "inferential_analysis")
             clean_df = df[[col_x, col_y]].dropna()
             if clean_df.empty:
                 results.append({
@@ -104,6 +105,7 @@ class DataAnalysisEngine:
         freq: Optional[str] = None,
         rolling_window: int = 7,
     ) -> Dict[str, Any]:
+        self._require_columns(df, [time_column, target_column], "time_series_analysis")
         ts_df = df[[time_column, target_column]].dropna()
         if ts_df.empty:
             raise ValueError("No data available for time series analysis")
@@ -134,7 +136,9 @@ class DataAnalysisEngine:
         test_size: float = 0.2,
         random_state: int = 42,
     ) -> Dict[str, Any]:
-        dataset = df[features + [target]].dropna()
+        required = features + [target]
+        self._require_columns(df, required, "linear_regression")
+        dataset = df[required].dropna()
         if len(dataset) < 2:
             raise ValueError("Not enough rows for regression analysis")
 
@@ -171,7 +175,9 @@ class DataAnalysisEngine:
         test_size: float = 0.2,
         random_state: int = 42,
     ) -> Dict[str, Any]:
-        dataset = df[features + [target]].dropna()
+        required = features + [target]
+        self._require_columns(df, required, "random_forest_regression")
+        dataset = df[required].dropna()
         if len(dataset) < 5:
             raise ValueError("Not enough rows for random forest regression")
 
@@ -204,6 +210,7 @@ class DataAnalysisEngine:
         features: List[str],
         n_components: int = 2,
     ) -> Dict[str, Any]:
+        self._require_columns(df, features, "multivariate_analysis")
         dataset = df[features].dropna()
         if dataset.empty:
             raise ValueError("No data available for multivariate analysis")
@@ -236,6 +243,17 @@ class DataAnalysisEngine:
 
         result["model_type"] = model_type
         return result
+
+    @staticmethod
+    def _require_columns(df: pd.DataFrame, columns: List[str], context: str) -> None:
+        missing = [col for col in columns if col not in df.columns]
+        if not missing:
+            return
+
+        available = sorted(str(col) for col in df.columns)
+        raise ValueError(
+            f"{context} requires columns {missing}, but the DataFrame only contains {available}"
+        )
 
     def run_suite(self, df: pd.DataFrame, plan: Dict[str, Any]) -> Dict[str, Any]:
         """

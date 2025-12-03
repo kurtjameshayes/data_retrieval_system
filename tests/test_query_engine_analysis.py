@@ -85,6 +85,60 @@ def sample_responses():
     }
 
 
+@pytest.fixture
+def renamed_responses():
+    return {
+        "census_api": {
+            "success": True,
+            "data": {
+                "metadata": {
+                    "column_name_overrides": {
+                        "B11001_001E": "Total households",
+                        "B15002_003E": "Male: No schooling completed",
+                    }
+                },
+                "data": [
+                    {
+                        "state": "AL",
+                        "year": 2020,
+                        "Total households": 10,
+                        "Male: No schooling completed": 1,
+                    },
+                    {
+                        "state": "AK",
+                        "year": 2020,
+                        "Total households": 20,
+                        "Male: No schooling completed": 2,
+                    },
+                    {
+                        "state": "AZ",
+                        "year": 2020,
+                        "Total households": 30,
+                        "Male: No schooling completed": 3,
+                    },
+                    {
+                        "state": "AR",
+                        "year": 2020,
+                        "Total households": 40,
+                        "Male: No schooling completed": 4,
+                    },
+                ],
+            },
+        },
+        "support_api": {
+            "success": True,
+            "data": {
+                "data": [
+                    {"state": "AL", "year": 2020, "support_value": 100},
+                    {"state": "AK", "year": 2020, "support_value": 200},
+                    {"state": "AZ", "year": 2020, "support_value": 300},
+                    {"state": "AR", "year": 2020, "support_value": 400},
+                ]
+            },
+        },
+    }
+
+
 def test_execute_queries_to_dataframe(sample_responses):
     engine = SampleQueryEngine(sample_responses)
     df = engine.execute_queries_to_dataframe(
@@ -121,3 +175,38 @@ def test_analyze_queries_returns_dataframe_and_analysis(sample_responses):
     assert isinstance(dataframe, pd.DataFrame)
     assert "linear_regression" in analysis
     assert "coefficients" in analysis["linear_regression"]
+
+
+def test_dataframe_includes_original_codes_when_overrides_present(renamed_responses):
+    engine = SampleQueryEngine(renamed_responses)
+    df = engine.execute_queries_to_dataframe(
+        queries=[
+            {"source_id": "census_api", "parameters": {}},
+            {"source_id": "support_api", "parameters": {}},
+        ],
+        join_on=["state", "year"],
+    )
+
+    columns = set(df.columns)
+    assert {"Total households", "B11001_001E", "Male: No schooling completed", "B15002_003E"}.issubset(columns)
+
+
+def test_analysis_plan_can_reference_original_codes(renamed_responses):
+    engine = SampleQueryEngine(renamed_responses)
+    result = engine.analyze_queries(
+        queries=[
+            {"source_id": "census_api", "parameters": {}},
+            {"source_id": "support_api", "parameters": {}},
+        ],
+        join_on=["state", "year"],
+        analysis_plan={
+            "linear_regression": {
+                "features": ["B15002_003E"],
+                "target": "B11001_001E",
+            }
+        },
+    )
+
+    linear = result["analysis"]["linear_regression"]
+    assert "coefficients" in linear
+    assert "B15002_003E" in linear["coefficients"]

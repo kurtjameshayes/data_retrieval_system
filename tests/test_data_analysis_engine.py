@@ -102,3 +102,11 @@ def test_run_suite(sample_df):
 
     assert "basic_statistics" in results
     assert "linear_regression" in results
+
+
+def test_linear_regression_reports_missing_columns(sample_df):
+    engine = DataAnalysisEngine()
+    with pytest.raises(ValueError) as excinfo:
+        engine.linear_regression(sample_df, features=["missing_feature"], target="value")
+
+    assert "missing_feature" in str(excinfo.value)
