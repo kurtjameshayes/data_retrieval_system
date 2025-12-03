@@ -357,8 +357,11 @@ class QueryEngine:
             if not result.get("success"):
                 raise ValueError(f"Query failed for {source_id}: {result.get('error')}")
 
+            payload = result.get("data")
+            metadata = self._extract_metadata(payload)
             records = self._extract_records(result)
             df = pd.DataFrame(records)
+            df = self._inject_column_aliases(df, metadata)
 
             if rename_map:
                 df = df.rename(columns=rename_map)
@@ -421,6 +424,37 @@ class QueryEngine:
         else:
             data = payload
         return data or []
+
+    @staticmethod
+    def _extract_metadata(payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return None
+        metadata = payload.get("metadata")
+        return metadata if isinstance(metadata, dict) else None
+
+    @staticmethod
+    def _inject_column_aliases(
+        df: pd.DataFrame,
+        metadata: Optional[Dict[str, Any]],
+    ) -> pd.DataFrame:
+        if not isinstance(metadata, dict):
+            return df
+
+        overrides = metadata.get("column_name_overrides")
+        if not isinstance(overrides, dict):
+            return df
+
+        for original, friendly in overrides.items():
+            if (
+                not isinstance(original, str)
+                or not isinstance(friendly, str)
+                or original in df.columns
+                or friendly not in df.columns
+            ):
+                continue
+            df[original] = df[friendly]
+
+        return df
 
     @staticmethod
     def _apply_aggregation(df: pd.DataFrame, aggregation: Dict[str, Any]) -> pd.DataFrame:
