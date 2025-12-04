@@ -21,6 +21,8 @@ from models.connector_config import ConnectorConfig
 
 QUERY_ID = "fbi_national_arrests_all_offenses"
 DATE_FORMAT = "%m-%Y"
+DEFAULT_FROM_MONTH = "01-2023"
+DEFAULT_TO_MONTH = "12-2024"
 
 
 def validate_connector() -> Tuple[bool, str]:
@@ -59,13 +61,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--from-month",
         dest="from_month",
         type=parse_month,
-        help="Start month (MM-YYYY). Overrides stored query parameter."
+        help=(
+            f"Start month (MM-YYYY). Defaults to {DEFAULT_FROM_MONTH} "
+            "if not provided."
+        )
     )
     parser.add_argument(
         "--to-month",
         dest="to_month",
         type=parse_month,
-        help="End month (MM-YYYY). Overrides stored query parameter."
+        help=(
+            f"End month (MM-YYYY). Defaults to {DEFAULT_TO_MONTH} "
+            "if not provided."
+        )
     )
     parser.add_argument(
         "--type",
@@ -87,11 +95,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def build_parameter_overrides(args: argparse.Namespace) -> Dict[str, str]:
-    overrides: Dict[str, str] = {}
-    if args.from_month:
-        overrides["from"] = args.from_month
-    if args.to_month:
-        overrides["to"] = args.to_month
+    overrides: Dict[str, str] = {
+        "from": args.from_month or DEFAULT_FROM_MONTH,
+        "to": args.to_month or DEFAULT_TO_MONTH
+    }
     if args.result_type:
         overrides["type"] = args.result_type
     return overrides

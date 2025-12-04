@@ -1,5 +1,6 @@
 from typing import Dict, Any, List, Optional, Union
 import logging
+import re
 
 import pandas as pd
 
@@ -10,6 +11,8 @@ from models.stored_query import StoredQuery
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+DYNAMIC_PLACEHOLDER_PATTERN = re.compile(r"^\{([A-Za-z0-9_\-]+)\}$")
 
 class QueryEngine:
     """
@@ -147,16 +150,36 @@ class QueryEngine:
             # Get connector_id and parameters
             connector_id = stored_query["connector_id"]
             parameters = stored_query["parameters"].copy()
+            dynamic_placeholders = self._identify_dynamic_parameters(parameters)
+            token_to_params = self._map_tokens_to_parameters(dynamic_placeholders)
+            resolved_parameters = parameters.copy()
             
-            # Apply parameter overrides if provided
+            # Apply parameter overrides if provided (supports placeholder tokens)
             if parameter_overrides:
-                parameters.update(parameter_overrides)
+                for key, value in parameter_overrides.items():
+                    if key in resolved_parameters:
+                        resolved_parameters[key] = value
+                    elif key in token_to_params:
+                        for param_name in token_to_params[key]:
+                            resolved_parameters[param_name] = value
+                    else:
+                        resolved_parameters[key] = value
+            
+            missing_dynamic = self._find_missing_dynamic_parameters(
+                resolved_parameters, dynamic_placeholders
+            )
+            if missing_dynamic:
+                return {
+                    "success": False,
+                    "error": self._format_missing_dynamic_error(missing_dynamic),
+                    "query_id": query_id
+                }
             
             # Execute the query with query_id reference
             processing_context = {"stored_query": stored_query}
             result = self.execute_query(
                 connector_id,
-                parameters,
+                resolved_parameters,
                 use_cache,
                 query_id=query_id,
                 processing_context=processing_context
@@ -534,6 +557,49 @@ class QueryEngine:
             "cache_stats": self.cache_manager.get_stats(),
             "available_sources": len(self.connector_manager.list_sources())
         }
+
+    @staticmethod
+    def _extract_placeholder_token(value: Any) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        match = DYNAMIC_PLACEHOLDER_PATTERN.match(value.strip())
+        if match:
+            return match.group(1)
+        return None
+
+    def _identify_dynamic_parameters(self, parameters: Dict[str, Any]) -> Dict[str, str]:
+        dynamic: Dict[str, str] = {}
+        for key, value in parameters.items():
+            token = self._extract_placeholder_token(value)
+            if token:
+                dynamic[key] = token
+        return dynamic
+
+    @staticmethod
+    def _map_tokens_to_parameters(dynamic_placeholders: Dict[str, str]) -> Dict[str, List[str]]:
+        mapping: Dict[str, List[str]] = {}
+        for param, token in dynamic_placeholders.items():
+            mapping.setdefault(token, []).append(param)
+        return mapping
+
+    def _find_missing_dynamic_parameters(
+        self,
+        parameters: Dict[str, Any],
+        dynamic_placeholders: Dict[str, str]
+    ) -> List[Dict[str, str]]:
+        missing: List[Dict[str, str]] = []
+        for param, token in dynamic_placeholders.items():
+            value = parameters.get(param)
+            if self._extract_placeholder_token(value):
+                missing.append({"parameter": param, "token": token})
+        return missing
+
+    @staticmethod
+    def _format_missing_dynamic_error(missing: List[Dict[str, str]]) -> str:
+        details = ", ".join(
+            f"{item['parameter']} (placeholder '{item['token']}')" for item in missing
+        )
+        return f"Missing dynamic parameter values: {details}"
     
     def _build_processing_context(
         self,

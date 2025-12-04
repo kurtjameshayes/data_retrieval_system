@@ -42,8 +42,8 @@ FBI_QUERIES = [
         "parameters": {
             "endpoint": "arrest/national/all",
             "type": "counts",
-            "from": "01-2023",
-            "to": "12-2024"
+            "from": "{from_mm_yyyy}",
+            "to": "{to_mm_yyyy}"
         },
         "tags": ["fbi", "arrests", "national", "all-offenses"],
         "notes": {
@@ -53,9 +53,9 @@ FBI_QUERIES = [
                 "?type=counts&from=01-2023&to=12-2024"
             ),
             "usage": (
-                "Override the 'from'/'to' parameters (format MM-YYYY) when "
-                "executing via manage_queries or query_fbi.py to adjust the "
-                "monthly window."
+                "The 'from' and 'to' parameters are dynamic placeholders. "
+                "Provide concrete MM-YYYY values (e.g., via query_fbi.py or "
+                "parameter_overrides) before execution."
             )
         }
     }
