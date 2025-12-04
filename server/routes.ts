@@ -51,6 +51,19 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/connectors/:id", async (req, res) => {
+    try {
+      const connector = await storage.getConnector(req.params.id);
+      if (!connector) {
+        return res.status(404).json({ error: "Connector not found" });
+      }
+      res.json(connector);
+    } catch (error) {
+      console.error("Error fetching connector:", error);
+      res.status(500).json({ error: "Failed to fetch connector" });
+    }
+  });
+
   app.post("/api/connectors", async (req, res) => {
     try {
       const result = insertConnectorSchema.safeParse(req.body);
@@ -88,6 +101,19 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/queries/:id", async (req, res) => {
+    try {
+      const query = await storage.getQuery(req.params.id);
+      if (!query) {
+        return res.status(404).json({ error: "Query not found" });
+      }
+      res.json(query);
+    } catch (error) {
+      console.error("Error fetching query:", error);
+      res.status(500).json({ error: "Failed to fetch query" });
+    }
+  });
+
   app.post("/api/queries", async (req, res) => {
     try {
       const result = insertQuerySchema.safeParse(req.body);
@@ -103,6 +129,17 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/queries/:id", async (req, res) => {
+    try {
+      await storage.deleteQuery(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting query:", error);
+      res.status(500).json({ error: "Failed to delete query" });
+    }
+  });
+
+  // Query execution
   app.post("/api/queries/:id/run", async (req, res) => {
     try {
       const id = req.params.id;
@@ -116,6 +153,9 @@ export async function registerRoutes(
       if (!connector) {
         return res.status(404).json({ error: "Connector not found" });
       }
+
+      // Update query status to loading
+      await storage.updateQuery(id, { status: 'loading' });
 
       // Build the full URL
       let url = `${connector.baseUrl}${query.endpoint}`;
@@ -155,20 +195,33 @@ export async function registerRoutes(
 
       const data = await response.json();
 
-      // Update query with results
+      // Store result in query_results collection
+      const queryResult = await storage.createQueryResult({
+        queryId: id,
+        result: data,
+        status: 'success',
+      });
+
+      // Update query with last run time and status
       const updatedQuery = await storage.updateQuery(id, {
         lastRun: new Date(),
         status: 'success',
-        result: data,
       });
 
-      res.json(updatedQuery);
+      res.json({ query: updatedQuery, result: queryResult });
     } catch (error) {
       console.error("Error running query:", error);
       
-      // Update query with error status
       const id = req.params.id;
       try {
+        // Store error result
+        await storage.createQueryResult({
+          queryId: id,
+          result: null,
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+
         await storage.updateQuery(id, {
           lastRun: new Date(),
           status: 'error',
@@ -178,6 +231,30 @@ export async function registerRoutes(
       }
       
       res.status(500).json({ error: "Failed to execute query" });
+    }
+  });
+
+  // Query results routes
+  app.get("/api/queries/:id/results", async (req, res) => {
+    try {
+      const results = await storage.getQueryResults(req.params.id);
+      res.json(results);
+    } catch (error) {
+      console.error("Error fetching query results:", error);
+      res.status(500).json({ error: "Failed to fetch query results" });
+    }
+  });
+
+  app.get("/api/queries/:id/results/latest", async (req, res) => {
+    try {
+      const result = await storage.getLatestQueryResult(req.params.id);
+      if (!result) {
+        return res.status(404).json({ error: "No results found" });
+      }
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching latest query result:", error);
+      res.status(500).json({ error: "Failed to fetch latest query result" });
     }
   });
 

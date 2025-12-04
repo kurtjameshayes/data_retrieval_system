@@ -1,4 +1,4 @@
-import { ConnectorModel, QueryModel } from "./mongodb";
+import { ConnectorModel, QueryModel, QueryResultModel } from "./mongodb";
 
 export interface ConnectorField {
   id: string;
@@ -38,8 +38,16 @@ export interface Query {
   params: QueryParam[] | null;
   lastRun?: Date | null;
   status?: 'idle' | 'loading' | 'success' | 'error' | null;
-  result?: any;
   createdAt: Date;
+}
+
+export interface QueryResult {
+  id: string;
+  queryId: string;
+  result: any;
+  executedAt: Date;
+  status: 'success' | 'error';
+  error?: string | null;
 }
 
 export interface InsertConnector {
@@ -64,6 +72,13 @@ export interface InsertQuery {
   params?: QueryParam[] | null;
 }
 
+export interface InsertQueryResult {
+  queryId: string;
+  result: any;
+  status: 'success' | 'error';
+  error?: string | null;
+}
+
 export interface IStorage {
   getConnectors(): Promise<Connector[]>;
   getConnector(id: string): Promise<Connector | undefined>;
@@ -76,6 +91,10 @@ export interface IStorage {
   createQuery(query: InsertQuery): Promise<Query>;
   updateQuery(id: string, updates: Partial<Query>): Promise<Query>;
   deleteQuery(id: string): Promise<void>;
+
+  getQueryResults(queryId: string): Promise<QueryResult[]>;
+  getLatestQueryResult(queryId: string): Promise<QueryResult | undefined>;
+  createQueryResult(result: InsertQueryResult): Promise<QueryResult>;
 }
 
 function transformConnector(doc: any): Connector {
@@ -106,8 +125,18 @@ function transformQuery(doc: any): Query {
     params: doc.params,
     lastRun: doc.lastRun,
     status: doc.status,
-    result: doc.result,
     createdAt: doc.createdAt,
+  };
+}
+
+function transformQueryResult(doc: any): QueryResult {
+  return {
+    id: doc._id.toString(),
+    queryId: doc.queryId.toString(),
+    result: doc.result,
+    executedAt: doc.executedAt,
+    status: doc.status,
+    error: doc.error,
   };
 }
 
@@ -163,6 +192,22 @@ export class MongoStorage implements IStorage {
 
   async deleteQuery(id: string): Promise<void> {
     await QueryModel.findByIdAndDelete(id);
+    await QueryResultModel.deleteMany({ queryId: id });
+  }
+
+  async getQueryResults(queryId: string): Promise<QueryResult[]> {
+    const docs = await QueryResultModel.find({ queryId }).sort({ executedAt: -1 });
+    return docs.map(transformQueryResult);
+  }
+
+  async getLatestQueryResult(queryId: string): Promise<QueryResult | undefined> {
+    const doc = await QueryResultModel.findOne({ queryId }).sort({ executedAt: -1 });
+    return doc ? transformQueryResult(doc) : undefined;
+  }
+
+  async createQueryResult(result: InsertQueryResult): Promise<QueryResult> {
+    const doc = await QueryResultModel.create(result);
+    return transformQueryResult(doc);
   }
 }
 

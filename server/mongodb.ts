@@ -6,11 +6,14 @@ if (!process.env.MONGODB_URI) {
   );
 }
 
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('Connected to MongoDB'))
+// Connect to specific database: data_retrieval_system
+mongoose.connect(process.env.MONGODB_URI, {
+  dbName: 'data_retrieval_system',
+})
+  .then(() => console.log('Connected to MongoDB - data_retrieval_system'))
   .catch((err) => console.error('MongoDB connection error:', err));
 
-// Connector Schema
+// Connector Schema - maps to connector_config collection
 const connectorSchema = new mongoose.Schema({
   name: { type: String, required: true },
   baseUrl: { type: String, required: true },
@@ -22,9 +25,9 @@ const connectorSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 });
 
-// Query Schema
+// Query Schema - maps to stored_queries collection
 const querySchema = new mongoose.Schema({
-  connectorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Connector', required: true },
+  connectorId: { type: mongoose.Schema.Types.ObjectId, ref: 'ConnectorConfig', required: true },
   name: { type: String, required: true },
   description: { type: String, default: null },
   notes: { type: String, default: null },
@@ -35,9 +38,19 @@ const querySchema = new mongoose.Schema({
   params: { type: Array, default: [] },
   lastRun: { type: Date, default: null },
   status: { type: String, enum: ['idle', 'loading', 'success', 'error'], default: 'idle' },
-  result: { type: mongoose.Schema.Types.Mixed, default: null },
   createdAt: { type: Date, default: Date.now },
 });
 
-export const ConnectorModel = mongoose.model('Connector', connectorSchema);
-export const QueryModel = mongoose.model('Query', querySchema);
+// Query Results Schema - maps to query_results collection
+const queryResultSchema = new mongoose.Schema({
+  queryId: { type: mongoose.Schema.Types.ObjectId, ref: 'StoredQuery', required: true },
+  result: { type: mongoose.Schema.Types.Mixed, required: true },
+  executedAt: { type: Date, default: Date.now },
+  status: { type: String, enum: ['success', 'error'], required: true },
+  error: { type: String, default: null },
+});
+
+// Use specific collection names
+export const ConnectorModel = mongoose.model('ConnectorConfig', connectorSchema, 'connector_config');
+export const QueryModel = mongoose.model('StoredQuery', querySchema, 'stored_queries');
+export const QueryResultModel = mongoose.model('QueryResult', queryResultSchema, 'query_results');
