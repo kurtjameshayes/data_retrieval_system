@@ -168,6 +168,18 @@ def normalize_payload_records(payload: Any) -> List[Dict[str, object]]:
     if records is None:
         return []
     if isinstance(records, dict):
+        flattened: List[Dict[str, object]] = []
+        flattenable = True
+        for value in records.values():
+            if isinstance(value, list):
+                flattened.extend(item for item in value if item is not None)
+            elif isinstance(value, dict):
+                flattened.append(value)
+            else:
+                flattenable = False
+                break
+        if flattenable and flattened:
+            return flattened
         return [records]
     if isinstance(records, list):
         return records
