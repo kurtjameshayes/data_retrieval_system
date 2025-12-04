@@ -63,12 +63,15 @@ class FBICrimeConnector(BaseConnector):
                 'Accept': 'application/json'
             })
             
-            # Test connection with a simple request
+            # Test connection with a supported endpoint for the configured base URL
+            health_endpoint, health_params = self._get_healthcheck_spec()
+            health_from = health_params.get('from') or health_params.get('from_year')
+            health_to = health_params.get('to') or health_params.get('to_year')
             test_url, params = self._prepare_request(
-                endpoint='estimates/national',
-                from_year='2020',
-                to_year='2020',
-                extra_params={}
+                endpoint=health_endpoint,
+                from_year=health_from,
+                to_year=health_to,
+                extra_params=health_params.copy()
             )
             response = self.session.get(test_url, params=params, timeout=10)
             response.raise_for_status()
@@ -77,6 +80,16 @@ class FBICrimeConnector(BaseConnector):
             logger.info("Successfully connected to FBI Crime Data API")
             return True
             
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response else 'unknown'
+            body = e.response.text if e.response else ''
+            logger.error(
+                "Failed to connect to FBI Crime Data API (status %s): %s",
+                status,
+                body or str(e)
+            )
+            self.connected = False
+            return False
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to connect to FBI Crime Data API: {str(e)}")
             self.connected = False
@@ -218,7 +231,9 @@ class FBICrimeConnector(BaseConnector):
         path_segments.append(endpoint)
         url = '/'.join(segment.strip('/') for segment in path_segments if segment)
         
-        params: Dict[str, Any] = {'api_key': self.api_key}
+        params: Dict[str, Any] = {}
+        if self.api_key:
+            params['api_key'] = self.api_key
         
         # Legacy endpoints expect years in the path
         if self.legacy_endpoint_style:
@@ -228,9 +243,9 @@ class FBICrimeConnector(BaseConnector):
                 url = f"{url}/{start_year}/{end_year or start_year}"
         else:
             if from_year:
-                params['from_year'] = from_year
+                params['from'] = from_year
             if to_year:
-                params['to_year'] = to_year
+                params['to'] = to_year
         
         for key, value in extra_params.items():
             if key in {'endpoint', 'from', 'to', 'from_year', 'to_year', 'api_key'}:
@@ -377,6 +392,30 @@ class FBICrimeConnector(BaseConnector):
             'arrests/national',
             'arrests/states/{state_abbr}'
         ]
+
+    def _get_healthcheck_spec(self) -> Tuple[str, Dict[str, Any]]:
+        """
+        Determine which endpoint/parameters to use for connection testing.
+        """
+        if self.legacy_endpoint_style:
+            default_endpoint = 'estimates/national'
+            default_params: Dict[str, Any] = {
+                'from': '2020',
+                'to': '2020'
+            }
+        else:
+            default_endpoint = 'arrest/national/all'
+            default_params = {
+                'type': 'counts',
+                'from': '01-2023',
+                'to': '01-2023'
+            }
+        
+        endpoint = self.config.get('healthcheck_endpoint', default_endpoint)
+        configured_params = self.config.get('healthcheck_params') or {}
+        params = default_params.copy()
+        params.update(configured_params)
+        return endpoint, params
     
     def get_state_abbreviations(self) -> List[str]:
         """
