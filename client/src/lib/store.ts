@@ -34,6 +34,8 @@ export interface Query {
   id: string;
   connectorId: string;
   name: string;
+  description?: string;
+  queryId: string; // User defined ID
   endpoint: string;
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   params: QueryParam[];
@@ -82,6 +84,8 @@ const INITIAL_QUERIES: Query[] = [
     id: 'q_1',
     connectorId: 'conn_1',
     name: '2020 Population by State',
+    description: 'Fetches population data for all states from the 2020 Census PL file.',
+    queryId: 'census_pop_2020',
     endpoint: '/2020/dec/pl',
     method: 'GET',
     params: [

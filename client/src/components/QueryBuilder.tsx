@@ -28,6 +28,8 @@ export default function QueryBuilder() {
   
   const [selectedConnectorId, setSelectedConnectorId] = useState<string>("");
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [queryId, setQueryId] = useState("");
   const [endpoint, setEndpoint] = useState("");
   const [method, setMethod] = useState<"GET" | "POST" | "PUT" | "DELETE">("GET");
   const [params, setParams] = useState<{ key: string; value: string; enabled: boolean }[]>([]);
@@ -50,11 +52,20 @@ export default function QueryBuilder() {
   };
 
   const handleSaveQuery = () => {
-    if (!selectedConnectorId || !name || !endpoint) {
+    if (!selectedConnectorId || !name || !endpoint || !queryId) {
       toast({
         variant: "destructive",
         title: "Validation Error",
-        description: "Please fill in all required fields.",
+        description: "Please fill in all required fields (including Query ID).",
+      });
+      return;
+    }
+
+    if (/\s/.test(queryId)) {
+      toast({
+        variant: "destructive",
+        title: "Validation Error",
+        description: "Query ID must not contain spaces.",
       });
       return;
     }
@@ -62,6 +73,8 @@ export default function QueryBuilder() {
     addQuery({
       connectorId: selectedConnectorId,
       name,
+      description,
+      queryId,
       endpoint,
       method,
       params: params.map((p, i) => ({ ...p, id: `p_${i}` })),
@@ -74,6 +87,8 @@ export default function QueryBuilder() {
     
     // Reset form partially
     setName("");
+    setDescription("");
+    setQueryId("");
   };
 
   return (
@@ -112,6 +127,25 @@ export default function QueryBuilder() {
                 value={name} 
                 onChange={(e) => setName(e.target.value)} 
                 placeholder="e.g. Get Active Users" 
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Query ID (No Spaces)</Label>
+              <Input 
+                value={queryId} 
+                onChange={(e) => setQueryId(e.target.value.replace(/\s/g, ''))} 
+                placeholder="e.g. get_active_users" 
+                className="font-mono text-sm"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Input 
+                value={description} 
+                onChange={(e) => setDescription(e.target.value)} 
+                placeholder="Brief explanation of what this query does..." 
               />
             </div>
 
