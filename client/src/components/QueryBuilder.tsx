@@ -49,7 +49,7 @@ export default function QueryBuilder() {
     if (connectorsData) setConnectors(connectorsData);
   }, [connectorsData, setConnectors]);
 
-  const selectedConnector = connectors.find(c => c.id === parseInt(selectedConnectorId));
+  const selectedConnector = connectors.find(c => c.id === selectedConnectorId);
 
   const createMutation = useMutation({
     mutationFn: api.createQuery,
@@ -122,7 +122,7 @@ export default function QueryBuilder() {
     }
 
     createMutation.mutate({
-      connectorId: parseInt(selectedConnectorId),
+      connectorId: selectedConnectorId,
       name,
       description: description || null,
       notes: notes || null,
@@ -153,7 +153,7 @@ export default function QueryBuilder() {
                 </SelectTrigger>
                 <SelectContent>
                   {connectors.map((c) => (
-                    <SelectItem key={c.id} value={c.id.toString()}>
+                    <SelectItem key={c.id} value={c.id}>
                       {c.name} <span className="text-muted-foreground ml-2 text-xs">({c.type})</span>
                     </SelectItem>
                   ))}

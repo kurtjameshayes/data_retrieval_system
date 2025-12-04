@@ -1,8 +1,39 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
-import { insertConnectorSchema, insertQuerySchema } from "@shared/schema";
+import { storage, type InsertConnector, type InsertQuery } from "./storage";
+import { z } from "zod";
 import { fromZodError } from "zod-validation-error";
+
+const insertConnectorSchema = z.object({
+  name: z.string().min(1),
+  baseUrl: z.string().url(),
+  type: z.enum(['REST', 'GRAPHQL']),
+  description: z.string().nullable().optional(),
+  headers: z.array(z.object({
+    id: z.string(),
+    key: z.string(),
+    value: z.string(),
+  })).nullable().optional(),
+  authType: z.enum(['None', 'Bearer', 'ApiKey']),
+  authKey: z.string().nullable().optional(),
+});
+
+const insertQuerySchema = z.object({
+  connectorId: z.string(),
+  name: z.string().min(1),
+  description: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  tags: z.array(z.string()).nullable().optional(),
+  queryId: z.string().min(1),
+  endpoint: z.string().min(1),
+  method: z.enum(['GET', 'POST', 'PUT', 'DELETE']),
+  params: z.array(z.object({
+    id: z.string(),
+    key: z.string(),
+    value: z.string(),
+    enabled: z.boolean(),
+  })).nullable().optional(),
+});
 
 export async function registerRoutes(
   httpServer: Server,
@@ -27,7 +58,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: fromZodError(result.error).message });
       }
       
-      const connector = await storage.createConnector(result.data);
+      const connector = await storage.createConnector(result.data as InsertConnector);
       res.status(201).json(connector);
     } catch (error) {
       console.error("Error creating connector:", error);
@@ -37,11 +68,7 @@ export async function registerRoutes(
 
   app.delete("/api/connectors/:id", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      if (isNaN(id)) {
-        return res.status(400).json({ error: "Invalid connector ID" });
-      }
-      
+      const id = req.params.id;
       await storage.deleteConnector(id);
       res.status(204).send();
     } catch (error) {
@@ -68,7 +95,7 @@ export async function registerRoutes(
         return res.status(400).json({ error: fromZodError(result.error).message });
       }
       
-      const query = await storage.createQuery(result.data);
+      const query = await storage.createQuery(result.data as InsertQuery);
       res.status(201).json(query);
     } catch (error) {
       console.error("Error creating query:", error);
@@ -78,10 +105,7 @@ export async function registerRoutes(
 
   app.post("/api/queries/:id/run", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      if (isNaN(id)) {
-        return res.status(400).json({ error: "Invalid query ID" });
-      }
+      const id = req.params.id;
 
       const query = await storage.getQuery(id);
       if (!query) {
@@ -143,12 +167,14 @@ export async function registerRoutes(
       console.error("Error running query:", error);
       
       // Update query with error status
-      const id = parseInt(req.params.id);
-      if (!isNaN(id)) {
+      const id = req.params.id;
+      try {
         await storage.updateQuery(id, {
           lastRun: new Date(),
           status: 'error',
         });
+      } catch (e) {
+        // Ignore update error
       }
       
       res.status(500).json({ error: "Failed to execute query" });

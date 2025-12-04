@@ -10,7 +10,7 @@ export interface ConnectorField {
 }
 
 export interface Connector {
-  id: number;
+  id: string;
   name: string;
   baseUrl: string;
   type: ConnectorType;
@@ -29,8 +29,8 @@ export interface QueryParam {
 }
 
 export interface Query {
-  id: number;
-  connectorId: number;
+  id: string;
+  connectorId: string;
   name: string;
   description?: string | null;
   notes?: string | null;
@@ -64,7 +64,7 @@ export const api = {
     return res.json();
   },
 
-  async deleteConnector(id: number): Promise<void> {
+  async deleteConnector(id: string): Promise<void> {
     const res = await fetch(`/api/connectors/${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed to delete connector');
   },
@@ -86,7 +86,7 @@ export const api = {
     return res.json();
   },
 
-  async runQuery(id: number): Promise<Query> {
+  async runQuery(id: string): Promise<Query> {
     const res = await fetch(`/api/queries/${id}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -103,7 +103,7 @@ interface AppState {
   
   setConnectors: (connectors: Connector[]) => void;
   setQueries: (queries: Query[]) => void;
-  updateQueryInStore: (id: number, updates: Partial<Query>) => void;
+  updateQueryInStore: (id: string, updates: Partial<Query>) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
