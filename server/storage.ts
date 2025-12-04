@@ -100,32 +100,32 @@ export interface IStorage {
 function transformConnector(doc: any): Connector {
   return {
     id: doc._id.toString(),
-    name: doc.name,
-    baseUrl: doc.baseUrl,
-    type: doc.type,
-    description: doc.description,
-    headers: doc.headers,
-    authType: doc.authType,
-    authKey: doc.authKey,
-    createdAt: doc.createdAt,
+    name: doc.name || doc.connector_name || '',
+    baseUrl: doc.baseUrl || doc.base_url || '',
+    type: doc.type || doc.api_type || 'REST',
+    description: doc.description || null,
+    headers: doc.headers || [],
+    authType: doc.authType || doc.auth_type || 'None',
+    authKey: doc.authKey || doc.auth_key || null,
+    createdAt: doc.createdAt || doc.created_at || new Date(),
   };
 }
 
 function transformQuery(doc: any): Query {
   return {
     id: doc._id.toString(),
-    connectorId: doc.connectorId.toString(),
-    name: doc.name,
-    description: doc.description,
-    notes: doc.notes,
-    tags: doc.tags,
-    queryId: doc.queryId,
-    endpoint: doc.endpoint,
-    method: doc.method,
-    params: doc.params,
-    lastRun: doc.lastRun,
-    status: doc.status,
-    createdAt: doc.createdAt,
+    connectorId: doc.connectorId ? doc.connectorId.toString() : doc.connector_id?.toString() || '',
+    name: doc.name || doc.query_name || '',
+    description: doc.description || null,
+    notes: doc.notes || null,
+    tags: doc.tags || [],
+    queryId: doc.queryId || doc.query_id || '',
+    endpoint: doc.endpoint || '',
+    method: doc.method || 'GET',
+    params: doc.params || doc.parameters || [],
+    lastRun: doc.lastRun || doc.last_run || null,
+    status: doc.status || 'idle',
+    createdAt: doc.createdAt || doc.created_at || new Date(),
   };
 }
 
