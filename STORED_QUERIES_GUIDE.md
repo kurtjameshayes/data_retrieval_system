@@ -216,6 +216,20 @@ curl -X POST http://localhost:5000/api/v1/queries/ca_crime_trend/execute \
   }'
 ```
 
+### Dynamic Parameters
+
+Stored query parameters can declare runtime placeholders using braces. For example:
+
+```json
+"parameters": {
+    "endpoint": "arrest/national/all",
+    "from": "{from_mm_yyyy}",
+    "to": "{to_mm_yyyy}"
+}
+```
+
+When a placeholder is present, `execute_stored_query` requires you to provide a concrete value either by overriding the actual parameter name (`"from": "01-2023"`) or by supplying the placeholder token (`"from_mm_yyyy": "01-2023"`). Requests that omit required values will return a descriptive error instead of issuing an incomplete API call.
+
 #### Search Queries
 ```bash
 curl "http://localhost:5000/api/v1/queries/search?q=california"
