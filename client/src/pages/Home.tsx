@@ -15,6 +15,20 @@ export default function Home() {
 
   return (
     <div className="space-y-8">
+      {/* System Status Banner */}
+      <div className="flex items-center justify-between bg-card/50 backdrop-blur border rounded-lg px-4 py-2">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-sm font-medium text-green-500">System Operational</span>
+          </div>
+          <span className="text-xs text-muted-foreground border-l pl-3">All systems nominal</span>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>v2.4.0-RC1</span>
+        </div>
+      </div>
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">System Overview</h1>
@@ -37,7 +51,7 @@ export default function Home() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2">
         <Card className="bg-card/50 backdrop-blur">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Active Connectors</CardTitle>
@@ -59,18 +73,6 @@ export default function Home() {
             <div className="text-2xl font-bold">{queries.length}</div>
             <p className="text-xs text-muted-foreground">
               {successQueries} successful executions
-            </p>
-          </CardContent>
-        </Card>
-        <Card className="bg-card/50 backdrop-blur">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">System Status</CardTitle>
-            <Activity className="h-4 w-4 text-green-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-500">Operational</div>
-            <p className="text-xs text-muted-foreground">
-              All systems nominal
             </p>
           </CardContent>
         </Card>
