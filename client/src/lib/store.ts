@@ -1,48 +1,44 @@
 import { create } from 'zustand';
 
-export type ConnectorType = 'REST' | 'GRAPHQL';
-
-export interface ConnectorField {
-  id: string;
-  key: string;
-  value: string;
-  description?: string;
-}
-
 export interface Connector {
   id: string;
-  name: string;
-  baseUrl: string;
-  type: ConnectorType;
+  sourceId: string;
+  sourceName: string;
+  connectorType: string;
+  url: string;
+  apiKey?: string | null;
+  format: string;
+  active: boolean;
   description: string | null;
-  headers: ConnectorField[] | null;
-  authType: 'None' | 'Bearer' | 'ApiKey';
-  authKey?: string | null;
+  documentation: string | null;
+  notes: string | null;
+  maxRetries: number;
+  retryDelay: number;
   createdAt: string;
-}
-
-export interface QueryParam {
-  id: string;
-  key: string;
-  value: string;
-  enabled: boolean;
+  updatedAt: string;
 }
 
 export interface Query {
   id: string;
-  connectorId: string;
-  name: string;
-  description?: string | null;
-  notes?: string | null;
-  tags?: string[] | null;
   queryId: string;
-  endpoint: string;
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  params: QueryParam[] | null;
-  lastRun?: string | null;
-  status?: 'idle' | 'loading' | 'success' | 'error' | null;
-  result?: any;
+  queryName: string;
+  connectorId: string;
+  description: string | null;
+  parameters: Record<string, any>;
+  tags: string[];
+  notes: any;
+  active: boolean;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface QueryResult {
+  id: string;
+  queryId: string;
+  result: any;
+  executedAt: string;
+  status: 'success' | 'error';
+  error?: string | null;
 }
 
 // API client functions
@@ -54,13 +50,29 @@ export const api = {
     return res.json();
   },
 
-  async createConnector(connector: Omit<Connector, 'id' | 'createdAt'>): Promise<Connector> {
+  async getConnector(id: string): Promise<Connector> {
+    const res = await fetch(`/api/connectors/${id}`);
+    if (!res.ok) throw new Error('Failed to fetch connector');
+    return res.json();
+  },
+
+  async createConnector(connector: Omit<Connector, 'id' | 'createdAt' | 'updatedAt' | 'active'>): Promise<Connector> {
     const res = await fetch('/api/connectors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(connector),
     });
     if (!res.ok) throw new Error('Failed to create connector');
+    return res.json();
+  },
+
+  async updateConnector(id: string, updates: Partial<Connector>): Promise<Connector> {
+    const res = await fetch(`/api/connectors/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error('Failed to update connector');
     return res.json();
   },
 
@@ -76,7 +88,19 @@ export const api = {
     return res.json();
   },
 
-  async createQuery(query: Omit<Query, 'id' | 'createdAt' | 'lastRun' | 'status' | 'result'>): Promise<Query> {
+  async getQuery(id: string): Promise<Query> {
+    const res = await fetch(`/api/queries/${id}`);
+    if (!res.ok) throw new Error('Failed to fetch query');
+    return res.json();
+  },
+
+  async getQueriesByConnector(connectorId: string): Promise<Query[]> {
+    const res = await fetch(`/api/queries/connector/${connectorId}`);
+    if (!res.ok) throw new Error('Failed to fetch queries');
+    return res.json();
+  },
+
+  async createQuery(query: Omit<Query, 'id' | 'createdAt' | 'updatedAt' | 'active'>): Promise<Query> {
     const res = await fetch('/api/queries', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -86,12 +110,39 @@ export const api = {
     return res.json();
   },
 
-  async runQuery(id: string): Promise<Query> {
+  async updateQuery(id: string, updates: Partial<Query>): Promise<Query> {
+    const res = await fetch(`/api/queries/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error('Failed to update query');
+    return res.json();
+  },
+
+  async deleteQuery(id: string): Promise<void> {
+    const res = await fetch(`/api/queries/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to delete query');
+  },
+
+  async runQuery(id: string): Promise<{ query: Query; result: QueryResult }> {
     const res = await fetch(`/api/queries/${id}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
     if (!res.ok) throw new Error('Failed to run query');
+    return res.json();
+  },
+
+  async getQueryResults(id: string): Promise<QueryResult[]> {
+    const res = await fetch(`/api/queries/${id}/results`);
+    if (!res.ok) throw new Error('Failed to fetch query results');
+    return res.json();
+  },
+
+  async getLatestQueryResult(id: string): Promise<QueryResult> {
+    const res = await fetch(`/api/queries/${id}/results/latest`);
+    if (!res.ok) throw new Error('Failed to fetch latest query result');
     return res.json();
   },
 };
@@ -103,7 +154,10 @@ interface AppState {
   
   setConnectors: (connectors: Connector[]) => void;
   setQueries: (queries: Query[]) => void;
-  updateQueryInStore: (id: string, updates: Partial<Query>) => void;
+  addConnector: (connector: Connector) => void;
+  addQuery: (query: Query) => void;
+  removeConnector: (id: string) => void;
+  removeQuery: (id: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -112,7 +166,16 @@ export const useAppStore = create<AppState>((set) => ({
   
   setConnectors: (connectors) => set({ connectors }),
   setQueries: (queries) => set({ queries }),
-  updateQueryInStore: (id, updates) => set((state) => ({
-    queries: state.queries.map(q => q.id === id ? { ...q, ...updates } : q)
+  addConnector: (connector) => set((state) => ({ 
+    connectors: [connector, ...state.connectors] 
+  })),
+  addQuery: (query) => set((state) => ({ 
+    queries: [query, ...state.queries] 
+  })),
+  removeConnector: (id) => set((state) => ({ 
+    connectors: state.connectors.filter(c => c.id !== id) 
+  })),
+  removeQuery: (id) => set((state) => ({ 
+    queries: state.queries.filter(q => q.id !== id) 
   })),
 }));

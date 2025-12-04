@@ -8,13 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Card,
   CardContent,
   CardDescription,
@@ -22,17 +15,22 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, Code, Plug } from "lucide-react";
+import { Code, Plug } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 const connectorSchema = z.object({
-  name: z.string().min(2, "Name is required"),
-  baseUrl: z.string().url("Must be a valid URL"),
-  type: z.enum(["REST", "GRAPHQL"]),
+  sourceId: z.string().min(1, "Source ID is required").regex(/^[a-z0-9_]+$/, "Only lowercase letters, numbers, and underscores"),
+  sourceName: z.string().min(2, "Source name is required"),
+  connectorType: z.string().min(1, "Connector type is required"),
+  url: z.string().url("Must be a valid URL"),
+  apiKey: z.string().optional(),
+  format: z.string().optional(),
   description: z.string().optional(),
-  authType: z.enum(["None", "Bearer", "ApiKey"]),
-  authKey: z.string().optional(),
+  documentation: z.string().optional(),
+  notes: z.string().optional(),
+  maxRetries: z.number().optional(),
+  retryDelay: z.number().optional(),
 });
 
 type ConnectorFormValues = z.infer<typeof connectorSchema>;
@@ -41,16 +39,21 @@ export default function ConnectorBuilder() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [jsonInput, setJsonInput] = useState("");
-  const [headers, setHeaders] = useState<{ key: string; value: string }[]>([]);
 
   const form = useForm<ConnectorFormValues>({
     resolver: zodResolver(connectorSchema),
     defaultValues: {
-      type: "REST",
-      authType: "None",
-      name: "",
-      baseUrl: "",
+      sourceId: "",
+      sourceName: "",
+      connectorType: "",
+      url: "",
+      apiKey: "",
+      format: "JSON",
       description: "",
+      documentation: "",
+      notes: "",
+      maxRetries: 3,
+      retryDelay: 1,
     },
   });
 
@@ -63,7 +66,6 @@ export default function ConnectorBuilder() {
         description: "The connector has been added to the system.",
       });
       form.reset();
-      setHeaders([]);
     },
     onError: () => {
       toast({
@@ -76,29 +78,36 @@ export default function ConnectorBuilder() {
 
   const onSubmit = (data: ConnectorFormValues) => {
     createMutation.mutate({
-      ...data,
+      sourceId: data.sourceId,
+      sourceName: data.sourceName,
+      connectorType: data.connectorType,
+      url: data.url,
+      apiKey: data.apiKey || null,
+      format: data.format || "JSON",
       description: data.description || null,
-      headers: headers.map((h, i) => ({ 
-        id: `h_${i}`, 
-        key: h.key, 
-        value: h.value 
-      })),
+      documentation: data.documentation || null,
+      notes: data.notes || null,
+      maxRetries: data.maxRetries || 3,
+      retryDelay: data.retryDelay || 1,
     });
   };
 
   const handleJsonImport = () => {
     try {
       const parsed = JSON.parse(jsonInput);
-      if (parsed.name) form.setValue("name", parsed.name);
-      if (parsed.baseUrl) form.setValue("baseUrl", parsed.baseUrl);
+      if (parsed.source_id) form.setValue("sourceId", parsed.source_id);
+      if (parsed.sourceId) form.setValue("sourceId", parsed.sourceId);
+      if (parsed.source_name) form.setValue("sourceName", parsed.source_name);
+      if (parsed.sourceName) form.setValue("sourceName", parsed.sourceName);
+      if (parsed.connector_type) form.setValue("connectorType", parsed.connector_type);
+      if (parsed.connectorType) form.setValue("connectorType", parsed.connectorType);
+      if (parsed.url) form.setValue("url", parsed.url);
+      if (parsed.api_key) form.setValue("apiKey", parsed.api_key);
+      if (parsed.apiKey) form.setValue("apiKey", parsed.apiKey);
+      if (parsed.format) form.setValue("format", parsed.format);
       if (parsed.description) form.setValue("description", parsed.description);
-      if (parsed.headers) {
-        const newHeaders = Object.entries(parsed.headers).map(([key, value]) => ({
-          key,
-          value: String(value),
-        }));
-        setHeaders(newHeaders);
-      }
+      if (parsed.documentation) form.setValue("documentation", parsed.documentation);
+      if (parsed.notes) form.setValue("notes", parsed.notes);
       toast({
         title: "Import Successful",
         description: "Form populated from JSON.",
@@ -110,14 +119,6 @@ export default function ConnectorBuilder() {
         description: "Invalid JSON format.",
       });
     }
-  };
-
-  const addHeader = () => setHeaders([...headers, { key: "", value: "" }]);
-  const removeHeader = (index: number) => setHeaders(headers.filter((_, i) => i !== index));
-  const updateHeader = (index: number, field: "key" | "value", value: string) => {
-    const newHeaders = [...headers];
-    newHeaders[index][field] = value;
-    setHeaders(newHeaders);
   };
 
   return (
@@ -138,93 +139,115 @@ export default function ConnectorBuilder() {
 
             <TabsContent value="manual">
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="sourceId">Source ID</Label>
+                    <Input 
+                      id="sourceId" 
+                      {...form.register("sourceId")} 
+                      placeholder="e.g. census_api" 
+                      className="font-mono text-xs"
+                      data-testid="input-source-id" 
+                    />
+                    {form.formState.errors.sourceId && (
+                      <p className="text-xs text-destructive">{form.formState.errors.sourceId.message}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="connectorType">Connector Type</Label>
+                    <Input 
+                      id="connectorType" 
+                      {...form.register("connectorType")} 
+                      placeholder="e.g. census, rest, fbi_crime" 
+                      className="font-mono text-xs"
+                      data-testid="input-connector-type" 
+                    />
+                  </div>
+                </div>
+
                 <div className="space-y-2">
-                  <Label htmlFor="name">Connector Name</Label>
-                  <Input id="name" {...form.register("name")} placeholder="e.g. Stripe API" data-testid="input-connector-name" />
-                  {form.formState.errors.name && (
-                    <p className="text-xs text-destructive">{form.formState.errors.name.message}</p>
+                  <Label htmlFor="sourceName">Source Name</Label>
+                  <Input 
+                    id="sourceName" 
+                    {...form.register("sourceName")} 
+                    placeholder="e.g. US Census Bureau API" 
+                    data-testid="input-source-name" 
+                  />
+                  {form.formState.errors.sourceName && (
+                    <p className="text-xs text-destructive">{form.formState.errors.sourceName.message}</p>
                   )}
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="baseUrl">Base URL</Label>
-                  <Input id="baseUrl" {...form.register("baseUrl")} placeholder="https://api.example.com/v1" className="font-mono text-xs" data-testid="input-base-url" />
-                  {form.formState.errors.baseUrl && (
-                    <p className="text-xs text-destructive">{form.formState.errors.baseUrl.message}</p>
+                  <Label htmlFor="url">API URL</Label>
+                  <Input 
+                    id="url" 
+                    {...form.register("url")} 
+                    placeholder="https://api.example.com/data" 
+                    className="font-mono text-xs" 
+                    data-testid="input-url" 
+                  />
+                  {form.formState.errors.url && (
+                    <p className="text-xs text-destructive">{form.formState.errors.url.message}</p>
                   )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Type</Label>
-                    <Select 
-                      onValueChange={(val: any) => form.setValue("type", val)}
-                      defaultValue={form.getValues("type")}
-                    >
-                      <SelectTrigger data-testid="select-connector-type">
-                        <SelectValue placeholder="Select type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="REST">REST</SelectItem>
-                        <SelectItem value="GRAPHQL">GraphQL</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <Label htmlFor="apiKey">API Key (Optional)</Label>
+                    <Input 
+                      id="apiKey" 
+                      type="password"
+                      {...form.register("apiKey")} 
+                      placeholder="Your API key" 
+                      className="font-mono text-xs"
+                      data-testid="input-api-key" 
+                    />
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Auth Type</Label>
-                    <Select 
-                      onValueChange={(val: any) => form.setValue("authType", val)}
-                      defaultValue={form.getValues("authType")}
-                    >
-                      <SelectTrigger data-testid="select-auth-type">
-                        <SelectValue placeholder="Select auth" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="None">None</SelectItem>
-                        <SelectItem value="Bearer">Bearer Token</SelectItem>
-                        <SelectItem value="ApiKey">API Key</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <Label htmlFor="format">Response Format</Label>
+                    <Input 
+                      id="format" 
+                      {...form.register("format")} 
+                      placeholder="JSON" 
+                      className="font-mono text-xs"
+                      data-testid="input-format" 
+                    />
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                    <Label>Default Headers</Label>
-                    <div className="space-y-2">
-                      {headers.map((header, index) => (
-                        <div key={index} className="flex gap-2">
-                          <Input 
-                            placeholder="Key" 
-                            value={header.key} 
-                            onChange={(e) => updateHeader(index, "key", e.target.value)}
-                            className="font-mono text-xs h-8"
-                          />
-                          <Input 
-                            placeholder="Value" 
-                            value={header.value} 
-                            onChange={(e) => updateHeader(index, "value", e.target.value)}
-                            className="font-mono text-xs h-8"
-                          />
-                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => removeHeader(index)}>
-                            <Trash2 className="h-4 w-4 text-muted-foreground" />
-                          </Button>
-                        </div>
-                      ))}
-                      <Button type="button" variant="outline" size="sm" onClick={addHeader} className="w-full border-dashed" data-testid="button-add-header">
-                        <Plus className="h-3 w-3 mr-2" /> Add Header
-                      </Button>
-                    </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="description">Description (Optional)</Label>
+                  <Label htmlFor="description">Description</Label>
                   <Textarea 
                     id="description" 
                     {...form.register("description")} 
                     placeholder="Brief description of this data source..." 
-                    className="resize-none h-20"
+                    className="resize-none h-16"
                     data-testid="textarea-description"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="documentation">Documentation URL</Label>
+                  <Input 
+                    id="documentation" 
+                    {...form.register("documentation")} 
+                    placeholder="https://docs.example.com/api" 
+                    className="font-mono text-xs"
+                    data-testid="input-documentation" 
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="notes">Notes</Label>
+                  <Textarea 
+                    id="notes" 
+                    {...form.register("notes")} 
+                    placeholder="Additional notes, usage tips, etc." 
+                    className="resize-none h-16"
+                    data-testid="textarea-notes"
                   />
                 </div>
 
@@ -244,11 +267,13 @@ export default function ConnectorBuilder() {
                       onChange={(e) => setJsonInput(e.target.value)}
                       className="font-mono text-xs min-h-[300px] bg-muted/50"
                       placeholder={`{
-  "name": "My API",
-  "baseUrl": "https://api.example.com",
-  "headers": {
-    "Authorization": "Bearer 123"
-  }
+  "source_id": "my_api",
+  "source_name": "My API",
+  "connector_type": "rest",
+  "url": "https://api.example.com",
+  "api_key": "your-api-key",
+  "description": "API description",
+  "documentation": "https://docs.example.com"
 }`}
                       data-testid="textarea-json-import"
                     />
@@ -270,7 +295,7 @@ export default function ConnectorBuilder() {
               <Plug className="h-12 w-12 mx-auto mb-4 opacity-20" />
               <h3 className="text-lg font-medium">Connector Preview</h3>
               <p className="text-sm max-w-xs mx-auto mt-2">
-                Configure the connector details on the left to register a new data source in the nexus.
+                Configure the connector details on the left to register a new data source.
               </p>
            </div>
         </Card>

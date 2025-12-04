@@ -2,9 +2,8 @@ import { useAppStore, api } from "@/lib/store";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Activity, Database, Plug, ArrowRight, Clock } from "lucide-react";
+import { Activity, Database, Plug, ArrowRight, Tag } from "lucide-react";
 import { Link } from "wouter";
-import { formatDistanceToNow } from "date-fns";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 
@@ -29,7 +28,6 @@ export default function Home() {
     if (queriesData) setQueries(queriesData);
   }, [queriesData, setQueries]);
 
-  const successQueries = queries.filter(q => q.status === 'success').length;
   const totalConnectors = connectors.length;
 
   return (
@@ -83,13 +81,13 @@ export default function Home() {
         </Card>
         <Card className="bg-card/50 backdrop-blur">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Queries</CardTitle>
+            <CardTitle className="text-sm font-medium">Stored Queries</CardTitle>
             <Database className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold" data-testid="text-query-count">{queries.length}</div>
             <p className="text-xs text-muted-foreground">
-              {successQueries} successful executions
+              Available for execution
             </p>
           </CardContent>
         </Card>
@@ -98,41 +96,29 @@ export default function Home() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
         <Card className="col-span-4 bg-card/50 backdrop-blur">
           <CardHeader>
-            <CardTitle>Recent Queries</CardTitle>
+            <CardTitle>Stored Queries</CardTitle>
             <CardDescription>
-              Latest data retrieval operations executed by the system.
+              Available queries for data retrieval operations.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
               {queries.slice(0, 5).map((query) => (
                 <div key={query.id} className="flex items-center justify-between p-3 border rounded-lg bg-background/50" data-testid={`query-item-${query.id}`}>
-                  <div className="flex items-center gap-4">
-                    <div className={`w-2 h-2 rounded-full ${
-                      query.status === 'success' ? 'bg-green-500' : 
-                      query.status === 'error' ? 'bg-red-500' : 'bg-gray-300'
-                    }`} />
-                    <div>
-                      <p className="text-sm font-medium leading-none">{query.name}</p>
-                      <p className="text-xs text-muted-foreground font-mono mt-1">
-                        {query.method} {query.endpoint}
-                      </p>
-                    </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium leading-none truncate">{query.queryName}</p>
+                    <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                      {query.description}
+                    </p>
                   </div>
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                    {query.lastRun && (
-                      <span className="flex items-center gap-1 text-xs">
-                        <Clock className="h-3 w-3" />
-                        {formatDistanceToNow(new Date(query.lastRun), { addSuffix: true })}
-                      </span>
-                    )}
-                    <Badge variant="outline">{query.status || 'idle'}</Badge>
+                  <div className="flex items-center gap-2 ml-4 shrink-0">
+                    <Badge variant="outline" className="font-mono text-xs">{query.connectorId}</Badge>
                   </div>
                 </div>
               ))}
               {queries.length === 0 && (
                 <div className="text-center py-8 text-muted-foreground">
-                  No queries executed yet.
+                  No queries stored yet.
                 </div>
               )}
             </div>
@@ -150,13 +136,13 @@ export default function Home() {
             <div className="space-y-4">
               {connectors.map((connector) => (
                 <div key={connector.id} className="flex items-start justify-between space-x-4" data-testid={`connector-item-${connector.id}`}>
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium leading-none">{connector.name}</p>
+                  <div className="space-y-1 min-w-0 flex-1">
+                    <p className="text-sm font-medium leading-none truncate">{connector.sourceName}</p>
                     <p className="text-xs text-muted-foreground line-clamp-1">
-                      {connector.baseUrl}
+                      {connector.url}
                     </p>
                   </div>
-                  <Badge variant="secondary" className="text-xs">{connector.type}</Badge>
+                  <Badge variant="secondary" className="text-xs shrink-0">{connector.connectorType}</Badge>
                 </div>
               ))}
               {connectors.length === 0 && (

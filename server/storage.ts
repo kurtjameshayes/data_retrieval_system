@@ -1,44 +1,35 @@
 import { ConnectorModel, QueryModel, QueryResultModel } from "./mongodb";
 
-export interface ConnectorField {
-  id: string;
-  key: string;
-  value: string;
-}
-
 export interface Connector {
   id: string;
-  name: string;
-  baseUrl: string;
-  type: 'REST' | 'GRAPHQL';
+  sourceId: string;
+  sourceName: string;
+  connectorType: string;
+  url: string;
+  apiKey?: string | null;
+  format: string;
+  active: boolean;
   description: string | null;
-  headers: ConnectorField[] | null;
-  authType: 'None' | 'Bearer' | 'ApiKey';
-  authKey?: string | null;
+  documentation: string | null;
+  notes: string | null;
+  maxRetries: number;
+  retryDelay: number;
   createdAt: Date;
-}
-
-export interface QueryParam {
-  id: string;
-  key: string;
-  value: string;
-  enabled: boolean;
+  updatedAt: Date;
 }
 
 export interface Query {
   id: string;
-  connectorId: string;
-  name: string;
-  description?: string | null;
-  notes?: string | null;
-  tags?: string[] | null;
   queryId: string;
-  endpoint: string;
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  params: QueryParam[] | null;
-  lastRun?: Date | null;
-  status?: 'idle' | 'loading' | 'success' | 'error' | null;
+  queryName: string;
+  connectorId: string;
+  description: string | null;
+  parameters: Record<string, any>;
+  tags: string[];
+  notes: any;
+  active: boolean;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface QueryResult {
@@ -51,25 +42,27 @@ export interface QueryResult {
 }
 
 export interface InsertConnector {
-  name: string;
-  baseUrl: string;
-  type: 'REST' | 'GRAPHQL';
+  sourceId: string;
+  sourceName: string;
+  connectorType: string;
+  url: string;
+  apiKey?: string | null;
+  format?: string;
   description?: string | null;
-  headers?: ConnectorField[] | null;
-  authType: 'None' | 'Bearer' | 'ApiKey';
-  authKey?: string | null;
+  documentation?: string | null;
+  notes?: string | null;
+  maxRetries?: number;
+  retryDelay?: number;
 }
 
 export interface InsertQuery {
-  connectorId: string;
-  name: string;
-  description?: string | null;
-  notes?: string | null;
-  tags?: string[] | null;
   queryId: string;
-  endpoint: string;
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  params?: QueryParam[] | null;
+  queryName: string;
+  connectorId: string;
+  description?: string | null;
+  parameters?: Record<string, any>;
+  tags?: string[];
+  notes?: any;
 }
 
 export interface InsertQueryResult {
@@ -82,14 +75,17 @@ export interface InsertQueryResult {
 export interface IStorage {
   getConnectors(): Promise<Connector[]>;
   getConnector(id: string): Promise<Connector | undefined>;
+  getConnectorBySourceId(sourceId: string): Promise<Connector | undefined>;
   createConnector(connector: InsertConnector): Promise<Connector>;
+  updateConnector(id: string, updates: Partial<InsertConnector>): Promise<Connector>;
   deleteConnector(id: string): Promise<void>;
   
   getQueries(): Promise<Query[]>;
   getQuery(id: string): Promise<Query | undefined>;
   getQueryByQueryId(queryId: string): Promise<Query | undefined>;
+  getQueriesByConnectorId(connectorId: string): Promise<Query[]>;
   createQuery(query: InsertQuery): Promise<Query>;
-  updateQuery(id: string, updates: Partial<Query>): Promise<Query>;
+  updateQuery(id: string, updates: Partial<InsertQuery>): Promise<Query>;
   deleteQuery(id: string): Promise<void>;
 
   getQueryResults(queryId: string): Promise<QueryResult[]>;
@@ -100,49 +96,53 @@ export interface IStorage {
 function transformConnector(doc: any): Connector {
   return {
     id: doc._id.toString(),
-    name: doc.name || doc.connector_name || '',
-    baseUrl: doc.baseUrl || doc.base_url || '',
-    type: doc.type || doc.api_type || 'REST',
+    sourceId: doc.source_id,
+    sourceName: doc.source_name,
+    connectorType: doc.connector_type,
+    url: doc.url,
+    apiKey: doc.api_key,
+    format: doc.format || 'JSON',
+    active: doc.active !== false,
     description: doc.description || null,
-    headers: doc.headers || [],
-    authType: doc.authType || doc.auth_type || 'None',
-    authKey: doc.authKey || doc.auth_key || null,
-    createdAt: doc.createdAt || doc.created_at || new Date(),
+    documentation: doc.documentation || null,
+    notes: doc.notes || null,
+    maxRetries: doc.max_retries || 3,
+    retryDelay: doc.retry_delay || 1,
+    createdAt: doc.created_at || new Date(),
+    updatedAt: doc.updated_at || new Date(),
   };
 }
 
 function transformQuery(doc: any): Query {
   return {
     id: doc._id.toString(),
-    connectorId: doc.connectorId ? doc.connectorId.toString() : doc.connector_id?.toString() || '',
-    name: doc.name || doc.query_name || '',
+    queryId: doc.query_id,
+    queryName: doc.query_name,
+    connectorId: doc.connector_id,
     description: doc.description || null,
-    notes: doc.notes || null,
+    parameters: doc.parameters || {},
     tags: doc.tags || [],
-    queryId: doc.queryId || doc.query_id || '',
-    endpoint: doc.endpoint || '',
-    method: doc.method || 'GET',
-    params: doc.params || doc.parameters || [],
-    lastRun: doc.lastRun || doc.last_run || null,
-    status: doc.status || 'idle',
-    createdAt: doc.createdAt || doc.created_at || new Date(),
+    notes: doc.notes || null,
+    active: doc.active !== false,
+    createdAt: doc.created_at || new Date(),
+    updatedAt: doc.updated_at || new Date(),
   };
 }
 
 function transformQueryResult(doc: any): QueryResult {
   return {
     id: doc._id.toString(),
-    queryId: doc.queryId.toString(),
+    queryId: doc.query_id,
     result: doc.result,
-    executedAt: doc.executedAt,
+    executedAt: doc.executed_at || new Date(),
     status: doc.status,
-    error: doc.error,
+    error: doc.error || null,
   };
 }
 
 export class MongoStorage implements IStorage {
   async getConnectors(): Promise<Connector[]> {
-    const docs = await ConnectorModel.find().sort({ createdAt: -1 });
+    const docs = await ConnectorModel.find({ active: { $ne: false } }).sort({ created_at: -1 });
     return docs.map(transformConnector);
   }
 
@@ -151,18 +151,56 @@ export class MongoStorage implements IStorage {
     return doc ? transformConnector(doc) : undefined;
   }
 
+  async getConnectorBySourceId(sourceId: string): Promise<Connector | undefined> {
+    const doc = await ConnectorModel.findOne({ source_id: sourceId });
+    return doc ? transformConnector(doc) : undefined;
+  }
+
   async createConnector(connector: InsertConnector): Promise<Connector> {
-    const doc = await ConnectorModel.create(connector);
+    const doc = await ConnectorModel.create({
+      source_id: connector.sourceId,
+      source_name: connector.sourceName,
+      connector_type: connector.connectorType,
+      url: connector.url,
+      api_key: connector.apiKey,
+      format: connector.format || 'JSON',
+      description: connector.description,
+      documentation: connector.documentation,
+      notes: connector.notes,
+      max_retries: connector.maxRetries || 3,
+      retry_delay: connector.retryDelay || 1,
+      active: true,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    return transformConnector(doc);
+  }
+
+  async updateConnector(id: string, updates: Partial<InsertConnector>): Promise<Connector> {
+    const updateData: any = { updated_at: new Date() };
+    if (updates.sourceId !== undefined) updateData.source_id = updates.sourceId;
+    if (updates.sourceName !== undefined) updateData.source_name = updates.sourceName;
+    if (updates.connectorType !== undefined) updateData.connector_type = updates.connectorType;
+    if (updates.url !== undefined) updateData.url = updates.url;
+    if (updates.apiKey !== undefined) updateData.api_key = updates.apiKey;
+    if (updates.format !== undefined) updateData.format = updates.format;
+    if (updates.description !== undefined) updateData.description = updates.description;
+    if (updates.documentation !== undefined) updateData.documentation = updates.documentation;
+    if (updates.notes !== undefined) updateData.notes = updates.notes;
+    if (updates.maxRetries !== undefined) updateData.max_retries = updates.maxRetries;
+    if (updates.retryDelay !== undefined) updateData.retry_delay = updates.retryDelay;
+
+    const doc = await ConnectorModel.findByIdAndUpdate(id, updateData, { new: true });
+    if (!doc) throw new Error('Connector not found');
     return transformConnector(doc);
   }
 
   async deleteConnector(id: string): Promise<void> {
-    await ConnectorModel.findByIdAndDelete(id);
-    await QueryModel.deleteMany({ connectorId: id });
+    await ConnectorModel.findByIdAndUpdate(id, { active: false, updated_at: new Date() });
   }
 
   async getQueries(): Promise<Query[]> {
-    const docs = await QueryModel.find().sort({ createdAt: -1 });
+    const docs = await QueryModel.find({ active: { $ne: false } }).sort({ created_at: -1 });
     return docs.map(transformQuery);
   }
 
@@ -172,41 +210,68 @@ export class MongoStorage implements IStorage {
   }
 
   async getQueryByQueryId(queryId: string): Promise<Query | undefined> {
-    const doc = await QueryModel.findOne({ queryId });
+    const doc = await QueryModel.findOne({ query_id: queryId });
     return doc ? transformQuery(doc) : undefined;
+  }
+
+  async getQueriesByConnectorId(connectorId: string): Promise<Query[]> {
+    const docs = await QueryModel.find({ connector_id: connectorId, active: { $ne: false } });
+    return docs.map(transformQuery);
   }
 
   async createQuery(query: InsertQuery): Promise<Query> {
     const doc = await QueryModel.create({
-      ...query,
-      status: 'idle',
+      query_id: query.queryId,
+      query_name: query.queryName,
+      connector_id: query.connectorId,
+      description: query.description,
+      parameters: query.parameters || {},
+      tags: query.tags || [],
+      notes: query.notes,
+      active: true,
+      created_at: new Date(),
+      updated_at: new Date(),
     });
     return transformQuery(doc);
   }
 
-  async updateQuery(id: string, updates: Partial<Query>): Promise<Query> {
-    const doc = await QueryModel.findByIdAndUpdate(id, updates, { new: true });
+  async updateQuery(id: string, updates: Partial<InsertQuery>): Promise<Query> {
+    const updateData: any = { updated_at: new Date() };
+    if (updates.queryId !== undefined) updateData.query_id = updates.queryId;
+    if (updates.queryName !== undefined) updateData.query_name = updates.queryName;
+    if (updates.connectorId !== undefined) updateData.connector_id = updates.connectorId;
+    if (updates.description !== undefined) updateData.description = updates.description;
+    if (updates.parameters !== undefined) updateData.parameters = updates.parameters;
+    if (updates.tags !== undefined) updateData.tags = updates.tags;
+    if (updates.notes !== undefined) updateData.notes = updates.notes;
+
+    const doc = await QueryModel.findByIdAndUpdate(id, updateData, { new: true });
     if (!doc) throw new Error('Query not found');
     return transformQuery(doc);
   }
 
   async deleteQuery(id: string): Promise<void> {
-    await QueryModel.findByIdAndDelete(id);
-    await QueryResultModel.deleteMany({ queryId: id });
+    await QueryModel.findByIdAndUpdate(id, { active: false, updated_at: new Date() });
   }
 
   async getQueryResults(queryId: string): Promise<QueryResult[]> {
-    const docs = await QueryResultModel.find({ queryId }).sort({ executedAt: -1 });
+    const docs = await QueryResultModel.find({ query_id: queryId }).sort({ executed_at: -1 });
     return docs.map(transformQueryResult);
   }
 
   async getLatestQueryResult(queryId: string): Promise<QueryResult | undefined> {
-    const doc = await QueryResultModel.findOne({ queryId }).sort({ executedAt: -1 });
+    const doc = await QueryResultModel.findOne({ query_id: queryId }).sort({ executed_at: -1 });
     return doc ? transformQueryResult(doc) : undefined;
   }
 
   async createQueryResult(result: InsertQueryResult): Promise<QueryResult> {
-    const doc = await QueryResultModel.create(result);
+    const doc = await QueryResultModel.create({
+      query_id: result.queryId,
+      result: result.result,
+      status: result.status,
+      error: result.error,
+      executed_at: new Date(),
+    });
     return transformQueryResult(doc);
   }
 }

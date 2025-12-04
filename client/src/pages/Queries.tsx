@@ -1,15 +1,29 @@
-import { useAppStore, api } from "@/lib/store";
+import { useAppStore, api, type Query } from "@/lib/store";
 import QueryBuilder from "@/components/QueryBuilder";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Play, Loader2, CheckCircle2, XCircle } from "lucide-react";
+import { Play, Loader2, CheckCircle2, XCircle, Eye, Tag } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 export default function Queries() {
-  const { queries, setQueries, updateQueryInStore } = useAppStore();
+  const { queries, setQueries } = useAppStore();
   const queryClient = useQueryClient();
+  const [runningQueries, setRunningQueries] = useState<Set<string>>(new Set());
+  const [resultDialog, setResultDialog] = useState<{ open: boolean; query: Query | null; result: any }>({
+    open: false,
+    query: null,
+    result: null,
+  });
 
   const { data: queriesData } = useQuery({
     queryKey: ['queries'],
@@ -22,15 +36,24 @@ export default function Queries() {
 
   const runMutation = useMutation({
     mutationFn: api.runQuery,
-    onMutate: async (id) => {
-      updateQueryInStore(id, { status: 'loading' });
+    onMutate: (id) => {
+      setRunningQueries(prev => new Set(prev).add(id));
     },
-    onSuccess: (data) => {
+    onSuccess: (data, id) => {
+      setRunningQueries(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      setResultDialog({ open: true, query: data.query, result: data.result });
       queryClient.invalidateQueries({ queryKey: ['queries'] });
-      updateQueryInStore(data.id, data);
     },
     onError: (_, id) => {
-      updateQueryInStore(id, { status: 'error' });
+      setRunningQueries(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     },
   });
 
@@ -49,38 +72,32 @@ export default function Queries() {
         <h3 className="text-lg font-medium mb-4">Query Library</h3>
         <div className="border rounded-lg bg-card/50 overflow-hidden">
           <div className="grid grid-cols-12 gap-4 p-4 border-b bg-muted/30 text-xs font-medium text-muted-foreground">
-            <div className="col-span-4">NAME</div>
-            <div className="col-span-4">ENDPOINT</div>
-            <div className="col-span-2">STATUS</div>
+            <div className="col-span-3">NAME</div>
+            <div className="col-span-2">QUERY ID</div>
+            <div className="col-span-2">CONNECTOR</div>
+            <div className="col-span-3">TAGS</div>
             <div className="col-span-2 text-right">ACTIONS</div>
           </div>
           
-          <div className="divide-y">
+          <div className="divide-y max-h-[500px] overflow-y-auto">
             {queries.map((query) => (
               <div key={query.id} className="grid grid-cols-12 gap-4 p-4 items-center hover:bg-muted/20 transition-colors" data-testid={`query-row-${query.id}`}>
-                <div className="col-span-4 font-medium text-sm">{query.name}</div>
-                <div className="col-span-4 text-xs font-mono text-muted-foreground truncate">
-                  <span className="font-bold mr-2 text-primary">{query.method}</span>
-                  {query.endpoint}
+                <div className="col-span-3">
+                  <p className="font-medium text-sm truncate">{query.queryName}</p>
+                  <p className="text-xs text-muted-foreground line-clamp-1">{query.description}</p>
+                </div>
+                <div className="col-span-2 text-xs font-mono text-muted-foreground truncate">
+                  {query.queryId}
                 </div>
                 <div className="col-span-2">
-                  {query.status === 'loading' && (
-                    <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20">
-                      <Loader2 className="h-3 w-3 mr-1 animate-spin" /> Running
-                    </Badge>
-                  )}
-                  {query.status === 'success' && (
-                    <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">
-                      <CheckCircle2 className="h-3 w-3 mr-1" /> Success
-                    </Badge>
-                  )}
-                  {query.status === 'error' && (
-                    <Badge variant="outline" className="bg-red-500/10 text-red-500 border-red-500/20">
-                      <XCircle className="h-3 w-3 mr-1" /> Error
-                    </Badge>
-                  )}
-                  {(!query.status || query.status === 'idle') && (
-                    <Badge variant="secondary">Idle</Badge>
+                  <Badge variant="outline" className="font-mono text-xs">{query.connectorId}</Badge>
+                </div>
+                <div className="col-span-3 flex flex-wrap gap-1">
+                  {query.tags?.slice(0, 3).map((tag) => (
+                    <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
+                  ))}
+                  {query.tags && query.tags.length > 3 && (
+                    <Badge variant="secondary" className="text-xs">+{query.tags.length - 3}</Badge>
                   )}
                 </div>
                 <div className="col-span-2 text-right">
@@ -88,10 +105,14 @@ export default function Queries() {
                     size="sm" 
                     variant="outline" 
                     onClick={() => runMutation.mutate(query.id)}
-                    disabled={query.status === 'loading'}
+                    disabled={runningQueries.has(query.id)}
                     data-testid={`button-run-query-${query.id}`}
                   >
-                    <Play className="h-3 w-3 mr-2" /> Run
+                    {runningQueries.has(query.id) ? (
+                      <><Loader2 className="h-3 w-3 mr-2 animate-spin" /> Running</>
+                    ) : (
+                      <><Play className="h-3 w-3 mr-2" /> Run</>
+                    )}
                   </Button>
                 </div>
               </div>
@@ -104,6 +125,22 @@ export default function Queries() {
           </div>
         </div>
       </div>
+
+      <Dialog open={resultDialog.open} onOpenChange={(open) => setResultDialog(prev => ({ ...prev, open }))}>
+        <DialogContent className="max-w-4xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle>Query Result: {resultDialog.query?.queryName}</DialogTitle>
+            <DialogDescription>
+              Executed at {resultDialog.result?.executedAt ? new Date(resultDialog.result.executedAt).toLocaleString() : 'N/A'}
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[60vh]">
+            <pre className="p-4 bg-muted rounded-lg text-xs font-mono overflow-x-auto">
+              {JSON.stringify(resultDialog.result?.result, null, 2)}
+            </pre>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

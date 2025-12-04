@@ -5,34 +5,27 @@ import { z } from "zod";
 import { fromZodError } from "zod-validation-error";
 
 const insertConnectorSchema = z.object({
-  name: z.string().min(1),
-  baseUrl: z.string().url(),
-  type: z.enum(['REST', 'GRAPHQL']),
+  sourceId: z.string().min(1),
+  sourceName: z.string().min(1),
+  connectorType: z.string().min(1),
+  url: z.string().url(),
+  apiKey: z.string().nullable().optional(),
+  format: z.string().optional(),
   description: z.string().nullable().optional(),
-  headers: z.array(z.object({
-    id: z.string(),
-    key: z.string(),
-    value: z.string(),
-  })).nullable().optional(),
-  authType: z.enum(['None', 'Bearer', 'ApiKey']),
-  authKey: z.string().nullable().optional(),
+  documentation: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  maxRetries: z.number().optional(),
+  retryDelay: z.number().optional(),
 });
 
 const insertQuerySchema = z.object({
-  connectorId: z.string(),
-  name: z.string().min(1),
-  description: z.string().nullable().optional(),
-  notes: z.string().nullable().optional(),
-  tags: z.array(z.string()).nullable().optional(),
   queryId: z.string().min(1),
-  endpoint: z.string().min(1),
-  method: z.enum(['GET', 'POST', 'PUT', 'DELETE']),
-  params: z.array(z.object({
-    id: z.string(),
-    key: z.string(),
-    value: z.string(),
-    enabled: z.boolean(),
-  })).nullable().optional(),
+  queryName: z.string().min(1),
+  connectorId: z.string().min(1),
+  description: z.string().nullable().optional(),
+  parameters: z.record(z.any()).optional(),
+  tags: z.array(z.string()).optional(),
+  notes: z.any().optional(),
 });
 
 export async function registerRoutes(
@@ -64,6 +57,19 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/connectors/source/:sourceId", async (req, res) => {
+    try {
+      const connector = await storage.getConnectorBySourceId(req.params.sourceId);
+      if (!connector) {
+        return res.status(404).json({ error: "Connector not found" });
+      }
+      res.json(connector);
+    } catch (error) {
+      console.error("Error fetching connector:", error);
+      res.status(500).json({ error: "Failed to fetch connector" });
+    }
+  });
+
   app.post("/api/connectors", async (req, res) => {
     try {
       const result = insertConnectorSchema.safeParse(req.body);
@@ -79,10 +85,19 @@ export async function registerRoutes(
     }
   });
 
+  app.put("/api/connectors/:id", async (req, res) => {
+    try {
+      const connector = await storage.updateConnector(req.params.id, req.body);
+      res.json(connector);
+    } catch (error) {
+      console.error("Error updating connector:", error);
+      res.status(500).json({ error: "Failed to update connector" });
+    }
+  });
+
   app.delete("/api/connectors/:id", async (req, res) => {
     try {
-      const id = req.params.id;
-      await storage.deleteConnector(id);
+      await storage.deleteConnector(req.params.id);
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting connector:", error);
@@ -114,6 +129,29 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/queries/by-query-id/:queryId", async (req, res) => {
+    try {
+      const query = await storage.getQueryByQueryId(req.params.queryId);
+      if (!query) {
+        return res.status(404).json({ error: "Query not found" });
+      }
+      res.json(query);
+    } catch (error) {
+      console.error("Error fetching query:", error);
+      res.status(500).json({ error: "Failed to fetch query" });
+    }
+  });
+
+  app.get("/api/queries/connector/:connectorId", async (req, res) => {
+    try {
+      const queries = await storage.getQueriesByConnectorId(req.params.connectorId);
+      res.json(queries);
+    } catch (error) {
+      console.error("Error fetching queries:", error);
+      res.status(500).json({ error: "Failed to fetch queries" });
+    }
+  });
+
   app.post("/api/queries", async (req, res) => {
     try {
       const result = insertQuerySchema.safeParse(req.body);
@@ -126,6 +164,16 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error creating query:", error);
       res.status(500).json({ error: "Failed to create query" });
+    }
+  });
+
+  app.put("/api/queries/:id", async (req, res) => {
+    try {
+      const query = await storage.updateQuery(req.params.id, req.body);
+      res.json(query);
+    } catch (error) {
+      console.error("Error updating query:", error);
+      res.status(500).json({ error: "Failed to update query" });
     }
   });
 
@@ -149,83 +197,71 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Query not found" });
       }
 
-      const connector = await storage.getConnector(query.connectorId);
+      // Get connector by source_id (connector_id in query references source_id)
+      const connector = await storage.getConnectorBySourceId(query.connectorId);
       if (!connector) {
-        return res.status(404).json({ error: "Connector not found" });
+        return res.status(404).json({ error: `Connector '${query.connectorId}' not found` });
       }
 
-      // Update query status to loading
-      await storage.updateQuery(id, { status: 'loading' });
-
-      // Build the full URL
-      let url = `${connector.baseUrl}${query.endpoint}`;
-      
-      // Add query parameters
-      const enabledParams = query.params?.filter((p: any) => p.enabled) || [];
-      if (enabledParams.length > 0) {
-        const params = new URLSearchParams();
-        enabledParams.forEach((p: any) => {
-          params.append(p.key, p.value);
+      // Build the request URL with parameters
+      const params = new URLSearchParams();
+      if (query.parameters) {
+        Object.entries(query.parameters).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            params.append(key, String(value));
+          }
         });
-        url += `?${params.toString()}`;
       }
+
+      // Add API key if available
+      if (connector.apiKey) {
+        params.append('key', connector.apiKey);
+      }
+
+      const url = `${connector.url}?${params.toString()}`;
 
       // Build headers
       const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
+        'Accept': 'application/json',
       };
-      
-      // Add connector default headers
-      connector.headers?.forEach((h: any) => {
-        headers[h.key] = h.value;
-      });
-
-      // Add auth headers
-      if (connector.authType === 'Bearer' && connector.authKey) {
-        headers['Authorization'] = `Bearer ${connector.authKey}`;
-      } else if (connector.authType === 'ApiKey' && connector.authKey) {
-        headers[connector.authKey] = req.body.apiKey || '';
-      }
 
       // Execute the API call
       const response = await fetch(url, {
-        method: query.method,
+        method: 'GET',
         headers,
       });
 
-      const data = await response.json();
+      let data;
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        data = await response.json();
+      } else {
+        data = await response.text();
+      }
 
       // Store result in query_results collection
       const queryResult = await storage.createQueryResult({
-        queryId: id,
+        queryId: query.queryId,
         result: data,
-        status: 'success',
+        status: response.ok ? 'success' : 'error',
+        error: response.ok ? null : `HTTP ${response.status}`,
       });
 
-      // Update query with last run time and status
-      const updatedQuery = await storage.updateQuery(id, {
-        lastRun: new Date(),
-        status: 'success',
-      });
-
-      res.json({ query: updatedQuery, result: queryResult });
+      res.json({ query, result: queryResult });
     } catch (error) {
       console.error("Error running query:", error);
       
       const id = req.params.id;
       try {
-        // Store error result
-        await storage.createQueryResult({
-          queryId: id,
-          result: null,
-          status: 'error',
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
-
-        await storage.updateQuery(id, {
-          lastRun: new Date(),
-          status: 'error',
-        });
+        const query = await storage.getQuery(id);
+        if (query) {
+          await storage.createQueryResult({
+            queryId: query.queryId,
+            result: null,
+            status: 'error',
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+        }
       } catch (e) {
         // Ignore update error
       }
@@ -237,7 +273,11 @@ export async function registerRoutes(
   // Query results routes
   app.get("/api/queries/:id/results", async (req, res) => {
     try {
-      const results = await storage.getQueryResults(req.params.id);
+      const query = await storage.getQuery(req.params.id);
+      if (!query) {
+        return res.status(404).json({ error: "Query not found" });
+      }
+      const results = await storage.getQueryResults(query.queryId);
       res.json(results);
     } catch (error) {
       console.error("Error fetching query results:", error);
@@ -247,7 +287,11 @@ export async function registerRoutes(
 
   app.get("/api/queries/:id/results/latest", async (req, res) => {
     try {
-      const result = await storage.getLatestQueryResult(req.params.id);
+      const query = await storage.getQuery(req.params.id);
+      if (!query) {
+        return res.status(404).json({ error: "Query not found" });
+      }
+      const result = await storage.getLatestQueryResult(query.queryId);
       if (!result) {
         return res.status(404).json({ error: "No results found" });
       }

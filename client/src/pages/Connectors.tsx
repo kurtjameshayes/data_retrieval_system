@@ -3,7 +3,7 @@ import ConnectorBuilder from "@/components/ConnectorBuilder";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Trash2, Globe, Lock } from "lucide-react";
+import { Trash2, Globe, Key, FileText, ExternalLink } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -28,8 +28,8 @@ export default function Connectors() {
       queryClient.invalidateQueries({ queryKey: ['connectors'] });
       queryClient.invalidateQueries({ queryKey: ['queries'] });
       toast({
-        title: "Connector Deleted",
-        description: "The connector and its queries have been removed.",
+        title: "Connector Deactivated",
+        description: "The connector has been deactivated.",
       });
     },
     onError: () => {
@@ -61,27 +61,50 @@ export default function Connectors() {
             <Card key={connector.id} className="bg-card/50 hover:bg-card/80 transition-colors border-sidebar-border" data-testid={`connector-card-${connector.id}`}>
               <CardHeader className="pb-3">
                 <div className="flex justify-between items-start">
-                  <CardTitle className="text-base font-semibold">{connector.name}</CardTitle>
-                  <Badge variant="outline" className="font-mono text-xs">{connector.type}</Badge>
+                  <CardTitle className="text-base font-semibold">{connector.sourceName}</CardTitle>
+                  <Badge variant="outline" className="font-mono text-xs">{connector.connectorType}</Badge>
                 </div>
-                <CardDescription className="text-xs truncate" title={connector.baseUrl}>
-                  {connector.baseUrl}
+                <CardDescription className="text-xs font-mono truncate" title={connector.url}>
+                  {connector.url}
                 </CardDescription>
               </CardHeader>
-              <CardContent className="pb-3">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
-                  {connector.authType === 'None' ? (
-                    <Globe className="h-3 w-3" />
+              <CardContent className="pb-3 space-y-3">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  {connector.apiKey ? (
+                    <>
+                      <Key className="h-3 w-3 text-green-500" />
+                      <span className="text-green-500">API Key configured</span>
+                    </>
                   ) : (
-                    <Lock className="h-3 w-3" />
+                    <>
+                      <Globe className="h-3 w-3" />
+                      <span>No API key</span>
+                    </>
                   )}
-                  <span>Auth: {connector.authType}</span>
                 </div>
                 <p className="text-xs text-muted-foreground line-clamp-2 h-8">
                   {connector.description || "No description provided."}
                 </p>
+                {connector.documentation && (
+                  <a 
+                    href={connector.documentation} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-xs text-primary hover:underline"
+                  >
+                    <FileText className="h-3 w-3" />
+                    Documentation
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+                {connector.notes && (
+                  <p className="text-xs text-muted-foreground italic line-clamp-1">
+                    Note: {connector.notes}
+                  </p>
+                )}
               </CardContent>
-              <CardFooter className="pt-0 flex justify-end">
+              <CardFooter className="pt-0 flex justify-between items-center">
+                <span className="text-xs text-muted-foreground font-mono">{connector.sourceId}</span>
                  <Button 
                    variant="ghost" 
                    size="sm" 
