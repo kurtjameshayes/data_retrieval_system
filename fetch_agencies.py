@@ -6,7 +6,7 @@ import os
 import sys
 import time
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import requests
 from pymongo import MongoClient, UpdateOne
@@ -152,6 +152,28 @@ def ping_mongo(client: MongoClient) -> None:
     client.admin.command("ping")
 
 
+def normalize_payload_records(payload: Any) -> List[Dict[str, object]]:
+    """Extract the list of agency records from any API payload shape."""
+    records: Any
+    if isinstance(payload, dict):
+        for key in ("results", "data", "items"):
+            if key in payload and payload[key] is not None:
+                records = payload[key]
+                break
+        else:
+            records = payload
+    else:
+        records = payload
+
+    if records is None:
+        return []
+    if isinstance(records, dict):
+        return [records]
+    if isinstance(records, list):
+        return records
+    return [records]
+
+
 def fetch_state_agencies(
     state: str,
     session: requests.Session,
@@ -169,13 +191,7 @@ def fetch_state_agencies(
             response = session.get(url, params=params, timeout=30)
             response.raise_for_status()
             payload = response.json()
-            records = payload.get("results") if isinstance(payload, dict) else payload
-            if isinstance(records, dict):
-                records = [records]
-            if records is None:
-                records = []
-            if not isinstance(records, list):
-                records = [records]
+            records = normalize_payload_records(payload)
             logging.info("%s: fetched %d agencies", state, len(records))
             return records
         except (requests.RequestException, ValueError) as exc:
