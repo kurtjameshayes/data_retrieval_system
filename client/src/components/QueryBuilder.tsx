@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useAppStore, Connector, Query } from "@/lib/store";
+import { useState, useEffect } from "react";
+import { useAppStore, api } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,9 +22,11 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Play, Plus, Trash2, Save, Terminal, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 export default function QueryBuilder() {
-  const { connectors, addQuery, queries, runQuery } = useAppStore();
+  const { connectors, setConnectors } = useAppStore();
+  const queryClient = useQueryClient();
   const { toast } = useToast();
   
   const [selectedConnectorId, setSelectedConnectorId] = useState<string>("");
@@ -38,8 +40,39 @@ export default function QueryBuilder() {
   const [method, setMethod] = useState<"GET" | "POST" | "PUT" | "DELETE">("GET");
   const [params, setParams] = useState<{ key: string; value: string; enabled: boolean }[]>([]);
   
-  // For displaying the "active" query being built
-  const selectedConnector = connectors.find(c => c.id === selectedConnectorId);
+  const { data: connectorsData } = useQuery({
+    queryKey: ['connectors'],
+    queryFn: api.getConnectors,
+  });
+
+  useEffect(() => {
+    if (connectorsData) setConnectors(connectorsData);
+  }, [connectorsData, setConnectors]);
+
+  const selectedConnector = connectors.find(c => c.id === parseInt(selectedConnectorId));
+
+  const createMutation = useMutation({
+    mutationFn: api.createQuery,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['queries'] });
+      toast({
+        title: "Query Saved",
+        description: "Query has been added to the library.",
+      });
+      setName("");
+      setDescription("");
+      setNotes("");
+      setTags([]);
+      setQueryId("");
+    },
+    onError: () => {
+      toast({
+        variant: "destructive",
+        title: "Save Failed",
+        description: "Failed to save the query.",
+      });
+    },
+  });
 
   const handleAddParam = () => {
     setParams([...params, { key: "", value: "", enabled: true }]);
@@ -88,34 +121,21 @@ export default function QueryBuilder() {
       return;
     }
 
-    addQuery({
-      connectorId: selectedConnectorId,
+    createMutation.mutate({
+      connectorId: parseInt(selectedConnectorId),
       name,
-      description,
-      notes,
-      tags,
+      description: description || null,
+      notes: notes || null,
+      tags: tags.length > 0 ? tags : null,
       queryId,
       endpoint,
       method,
       params: params.map((p, i) => ({ ...p, id: `p_${i}` })),
     });
-
-    toast({
-      title: "Query Saved",
-      description: "Query has been added to the library.",
-    });
-    
-    // Reset form partially
-    setName("");
-    setDescription("");
-    setNotes("");
-    setTags([]);
-    setQueryId("");
   };
 
   return (
     <div className="grid gap-6 lg:grid-cols-12 h-[calc(100vh-8rem)]">
-      {/* Configuration Panel */}
       <div className="lg:col-span-4 flex flex-col gap-6 h-full overflow-y-auto pr-2">
         <Card>
           <CardHeader>
@@ -128,12 +148,12 @@ export default function QueryBuilder() {
             <div className="space-y-2">
               <Label>Source Connector</Label>
               <Select onValueChange={setSelectedConnectorId} value={selectedConnectorId}>
-                <SelectTrigger>
+                <SelectTrigger data-testid="select-source-connector">
                   <SelectValue placeholder="Select a data source..." />
                 </SelectTrigger>
                 <SelectContent>
                   {connectors.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
+                    <SelectItem key={c.id} value={c.id.toString()}>
                       {c.name} <span className="text-muted-foreground ml-2 text-xs">({c.type})</span>
                     </SelectItem>
                   ))}
@@ -149,6 +169,7 @@ export default function QueryBuilder() {
                 value={name} 
                 onChange={(e) => setName(e.target.value)} 
                 placeholder="e.g. Get Active Users" 
+                data-testid="input-query-name"
               />
             </div>
 
@@ -159,6 +180,7 @@ export default function QueryBuilder() {
                 onChange={(e) => setQueryId(e.target.value.replace(/\s/g, ''))} 
                 placeholder="e.g. get_active_users" 
                 className="font-mono text-sm"
+                data-testid="input-query-id"
               />
             </div>
 
@@ -168,6 +190,7 @@ export default function QueryBuilder() {
                 value={description} 
                 onChange={(e) => setDescription(e.target.value)} 
                 placeholder="Brief explanation of what this query does..." 
+                data-testid="input-query-description"
               />
             </div>
 
@@ -178,6 +201,7 @@ export default function QueryBuilder() {
                 onChange={(e) => setNotes(e.target.value)} 
                 placeholder="Detailed notes, implementation details, or usage instructions..." 
                 className="h-20 resize-none"
+                data-testid="textarea-query-notes"
               />
             </div>
 
@@ -189,10 +213,11 @@ export default function QueryBuilder() {
                   onChange={(e) => setTagInput(e.target.value)} 
                   onKeyDown={handleAddTag}
                   placeholder="Type tag and press Enter..." 
+                  data-testid="input-query-tags"
                 />
                 <div className="flex flex-wrap gap-2 min-h-[24px]">
                   {tags.map((tag) => (
-                    <Badge key={tag} variant="secondary" className="flex items-center gap-1 hover:bg-secondary/80">
+                    <Badge key={tag} variant="secondary" className="flex items-center gap-1 hover:bg-secondary/80" data-testid={`tag-${tag}`}>
                       {tag}
                       <X 
                         className="h-3 w-3 cursor-pointer hover:text-destructive" 
@@ -208,7 +233,7 @@ export default function QueryBuilder() {
               <div className="col-span-1">
                 <Label>Method</Label>
                 <Select value={method} onValueChange={(v: any) => setMethod(v)}>
-                  <SelectTrigger>
+                  <SelectTrigger data-testid="select-query-method">
                      <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -226,6 +251,7 @@ export default function QueryBuilder() {
                   onChange={(e) => setEndpoint(e.target.value)} 
                   placeholder="/users/active" 
                   className="font-mono text-sm"
+                  data-testid="input-query-endpoint"
                 />
               </div>
             </div>
@@ -233,7 +259,7 @@ export default function QueryBuilder() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>Query Parameters</Label>
-                <Button variant="ghost" size="sm" onClick={handleAddParam} className="h-6 w-6 p-0">
+                <Button variant="ghost" size="sm" onClick={handleAddParam} className="h-6 w-6 p-0" data-testid="button-add-param">
                   <Plus className="h-4 w-4" />
                 </Button>
               </div>
@@ -272,14 +298,13 @@ export default function QueryBuilder() {
             </div>
           </CardContent>
           <CardFooter>
-            <Button onClick={handleSaveQuery} className="w-full">
-              <Save className="h-4 w-4 mr-2" /> Save Query
+            <Button onClick={handleSaveQuery} className="w-full" disabled={createMutation.isPending} data-testid="button-save-query">
+              <Save className="h-4 w-4 mr-2" /> {createMutation.isPending ? "Saving..." : "Save Query"}
             </Button>
           </CardFooter>
         </Card>
       </div>
 
-      {/* Execution & Results Panel */}
       <div className="lg:col-span-8 flex flex-col h-full">
         <Card className="flex-1 flex flex-col overflow-hidden border-sidebar-border/50 bg-card/50 backdrop-blur-sm">
           <div className="p-4 border-b border-sidebar-border bg-sidebar/50 flex items-center justify-between">
@@ -291,7 +316,6 @@ export default function QueryBuilder() {
                 {selectedConnector ? selectedConnector.baseUrl : "..."}{endpoint}
               </span>
             </div>
-            {/* Run button for the CURRENT unsaved query - simplified for prototype to just save first */}
             <Badge variant="secondary">Preview Mode</Badge>
           </div>
           

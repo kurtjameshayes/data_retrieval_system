@@ -38,15 +38,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             
             return (
               <Link key={item.href} href={item.href}>
-                <a className={cn(
-                  "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                <div className={cn(
+                  "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer",
                   isActive 
                     ? "bg-sidebar-accent text-sidebar-accent-foreground" 
                     : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
                 )}>
                   <Icon className="h-4 w-4" />
                   {item.label}
-                </a>
+                </div>
               </Link>
             );
           })}

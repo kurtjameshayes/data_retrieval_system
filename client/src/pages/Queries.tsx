@@ -1,12 +1,38 @@
-import { useAppStore } from "@/lib/store";
+import { useAppStore, api } from "@/lib/store";
 import QueryBuilder from "@/components/QueryBuilder";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Play, Loader2, CheckCircle2, XCircle } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 
 export default function Queries() {
-  const { queries, runQuery } = useAppStore();
+  const { queries, setQueries, updateQueryInStore } = useAppStore();
+  const queryClient = useQueryClient();
+
+  const { data: queriesData } = useQuery({
+    queryKey: ['queries'],
+    queryFn: api.getQueries,
+  });
+
+  useEffect(() => {
+    if (queriesData) setQueries(queriesData);
+  }, [queriesData, setQueries]);
+
+  const runMutation = useMutation({
+    mutationFn: api.runQuery,
+    onMutate: async (id) => {
+      updateQueryInStore(id, { status: 'loading' });
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['queries'] });
+      updateQueryInStore(data.id, data);
+    },
+    onError: (_, id) => {
+      updateQueryInStore(id, { status: 'error' });
+    },
+  });
 
   return (
     <div className="space-y-8">
@@ -31,7 +57,7 @@ export default function Queries() {
           
           <div className="divide-y">
             {queries.map((query) => (
-              <div key={query.id} className="grid grid-cols-12 gap-4 p-4 items-center hover:bg-muted/20 transition-colors">
+              <div key={query.id} className="grid grid-cols-12 gap-4 p-4 items-center hover:bg-muted/20 transition-colors" data-testid={`query-row-${query.id}`}>
                 <div className="col-span-4 font-medium text-sm">{query.name}</div>
                 <div className="col-span-4 text-xs font-mono text-muted-foreground truncate">
                   <span className="font-bold mr-2 text-primary">{query.method}</span>
@@ -53,7 +79,7 @@ export default function Queries() {
                       <XCircle className="h-3 w-3 mr-1" /> Error
                     </Badge>
                   )}
-                  {query.status === 'idle' && (
+                  {(!query.status || query.status === 'idle') && (
                     <Badge variant="secondary">Idle</Badge>
                   )}
                 </div>
@@ -61,8 +87,9 @@ export default function Queries() {
                   <Button 
                     size="sm" 
                     variant="outline" 
-                    onClick={() => runQuery(query.id)}
+                    onClick={() => runMutation.mutate(query.id)}
                     disabled={query.status === 'loading'}
+                    data-testid={`button-run-query-${query.id}`}
                   >
                     <Play className="h-3 w-3 mr-2" /> Run
                   </Button>

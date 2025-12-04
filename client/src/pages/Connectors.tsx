@@ -1,12 +1,45 @@
-import { useAppStore } from "@/lib/store";
+import { useAppStore, api } from "@/lib/store";
 import ConnectorBuilder from "@/components/ConnectorBuilder";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Trash2, Globe, Lock, ShieldCheck } from "lucide-react";
+import { Trash2, Globe, Lock } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Connectors() {
-  const { connectors, deleteConnector } = useAppStore();
+  const { connectors, setConnectors } = useAppStore();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const { data: connectorsData } = useQuery({
+    queryKey: ['connectors'],
+    queryFn: api.getConnectors,
+  });
+
+  useEffect(() => {
+    if (connectorsData) setConnectors(connectorsData);
+  }, [connectorsData, setConnectors]);
+
+  const deleteMutation = useMutation({
+    mutationFn: api.deleteConnector,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['connectors'] });
+      queryClient.invalidateQueries({ queryKey: ['queries'] });
+      toast({
+        title: "Connector Deleted",
+        description: "The connector and its queries have been removed.",
+      });
+    },
+    onError: () => {
+      toast({
+        variant: "destructive",
+        title: "Delete Failed",
+        description: "Failed to delete the connector.",
+      });
+    },
+  });
 
   return (
     <div className="space-y-8">
@@ -25,7 +58,7 @@ export default function Connectors() {
         <h3 className="text-lg font-medium mb-4">Active Connectors</h3>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {connectors.map((connector) => (
-            <Card key={connector.id} className="bg-card/50 hover:bg-card/80 transition-colors border-sidebar-border">
+            <Card key={connector.id} className="bg-card/50 hover:bg-card/80 transition-colors border-sidebar-border" data-testid={`connector-card-${connector.id}`}>
               <CardHeader className="pb-3">
                 <div className="flex justify-between items-start">
                   <CardTitle className="text-base font-semibold">{connector.name}</CardTitle>
@@ -53,13 +86,20 @@ export default function Connectors() {
                    variant="ghost" 
                    size="sm" 
                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                   onClick={() => deleteConnector(connector.id)}
+                   onClick={() => deleteMutation.mutate(connector.id)}
+                   disabled={deleteMutation.isPending}
+                   data-testid={`button-delete-connector-${connector.id}`}
                  >
                    <Trash2 className="h-4 w-4" />
                  </Button>
               </CardFooter>
             </Card>
           ))}
+          {connectors.length === 0 && (
+            <div className="col-span-full text-center py-12 text-muted-foreground">
+              No connectors configured yet. Create one above to get started.
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { useAppStore } from "@/lib/store";
+import { api } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,6 +24,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Trash2, Code, Plug } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 const connectorSchema = z.object({
   name: z.string().min(2, "Name is required"),
@@ -37,7 +38,7 @@ const connectorSchema = z.object({
 type ConnectorFormValues = z.infer<typeof connectorSchema>;
 
 export default function ConnectorBuilder() {
-  const { addConnector } = useAppStore();
+  const queryClient = useQueryClient();
   const { toast } = useToast();
   const [jsonInput, setJsonInput] = useState("");
   const [headers, setHeaders] = useState<{ key: string; value: string }[]>([]);
@@ -53,30 +54,41 @@ export default function ConnectorBuilder() {
     },
   });
 
+  const createMutation = useMutation({
+    mutationFn: api.createConnector,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['connectors'] });
+      toast({
+        title: "Connector Created",
+        description: "The connector has been added to the system.",
+      });
+      form.reset();
+      setHeaders([]);
+    },
+    onError: () => {
+      toast({
+        variant: "destructive",
+        title: "Creation Failed",
+        description: "Failed to create the connector.",
+      });
+    },
+  });
+
   const onSubmit = (data: ConnectorFormValues) => {
-    addConnector({
+    createMutation.mutate({
       ...data,
-      description: data.description || "",
+      description: data.description || null,
       headers: headers.map((h, i) => ({ 
         id: `h_${i}`, 
         key: h.key, 
         value: h.value 
       })),
     });
-
-    toast({
-      title: "Connector Created",
-      description: `${data.name} has been added to the system.`,
-    });
-    
-    form.reset();
-    setHeaders([]);
   };
 
   const handleJsonImport = () => {
     try {
       const parsed = JSON.parse(jsonInput);
-      // Basic validation and mapping
       if (parsed.name) form.setValue("name", parsed.name);
       if (parsed.baseUrl) form.setValue("baseUrl", parsed.baseUrl);
       if (parsed.description) form.setValue("description", parsed.description);
@@ -110,7 +122,6 @@ export default function ConnectorBuilder() {
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
-      {/* Builder Column */}
       <Card className="border-sidebar-border/50 bg-card/50 backdrop-blur-sm">
         <CardHeader>
           <CardTitle>Connector Configuration</CardTitle>
@@ -129,7 +140,7 @@ export default function ConnectorBuilder() {
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="name">Connector Name</Label>
-                  <Input id="name" {...form.register("name")} placeholder="e.g. Stripe API" />
+                  <Input id="name" {...form.register("name")} placeholder="e.g. Stripe API" data-testid="input-connector-name" />
                   {form.formState.errors.name && (
                     <p className="text-xs text-destructive">{form.formState.errors.name.message}</p>
                   )}
@@ -137,7 +148,7 @@ export default function ConnectorBuilder() {
 
                 <div className="space-y-2">
                   <Label htmlFor="baseUrl">Base URL</Label>
-                  <Input id="baseUrl" {...form.register("baseUrl")} placeholder="https://api.example.com/v1" className="font-mono text-xs" />
+                  <Input id="baseUrl" {...form.register("baseUrl")} placeholder="https://api.example.com/v1" className="font-mono text-xs" data-testid="input-base-url" />
                   {form.formState.errors.baseUrl && (
                     <p className="text-xs text-destructive">{form.formState.errors.baseUrl.message}</p>
                   )}
@@ -150,7 +161,7 @@ export default function ConnectorBuilder() {
                       onValueChange={(val: any) => form.setValue("type", val)}
                       defaultValue={form.getValues("type")}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger data-testid="select-connector-type">
                         <SelectValue placeholder="Select type" />
                       </SelectTrigger>
                       <SelectContent>
@@ -166,7 +177,7 @@ export default function ConnectorBuilder() {
                       onValueChange={(val: any) => form.setValue("authType", val)}
                       defaultValue={form.getValues("authType")}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger data-testid="select-auth-type">
                         <SelectValue placeholder="Select auth" />
                       </SelectTrigger>
                       <SelectContent>
@@ -200,7 +211,7 @@ export default function ConnectorBuilder() {
                           </Button>
                         </div>
                       ))}
-                      <Button type="button" variant="outline" size="sm" onClick={addHeader} className="w-full border-dashed">
+                      <Button type="button" variant="outline" size="sm" onClick={addHeader} className="w-full border-dashed" data-testid="button-add-header">
                         <Plus className="h-3 w-3 mr-2" /> Add Header
                       </Button>
                     </div>
@@ -213,10 +224,13 @@ export default function ConnectorBuilder() {
                     {...form.register("description")} 
                     placeholder="Brief description of this data source..." 
                     className="resize-none h-20"
+                    data-testid="textarea-description"
                   />
                 </div>
 
-                <Button type="submit" className="w-full">Create Connector</Button>
+                <Button type="submit" className="w-full" disabled={createMutation.isPending} data-testid="button-create-connector">
+                  {createMutation.isPending ? "Creating..." : "Create Connector"}
+                </Button>
               </form>
             </TabsContent>
 
@@ -236,11 +250,12 @@ export default function ConnectorBuilder() {
     "Authorization": "Bearer 123"
   }
 }`}
+                      data-testid="textarea-json-import"
                     />
                     <Code className="absolute top-3 right-3 h-4 w-4 text-muted-foreground opacity-50" />
                   </div>
                 </div>
-                <Button onClick={handleJsonImport} variant="secondary" className="w-full">
+                <Button onClick={handleJsonImport} variant="secondary" className="w-full" data-testid="button-import-json">
                   Parse & Populate Form
                 </Button>
               </div>
@@ -249,7 +264,6 @@ export default function ConnectorBuilder() {
         </CardContent>
       </Card>
 
-      {/* Preview Column - could be used for something else later */}
       <div className="hidden lg:block space-y-6">
         <Card className="border-sidebar-border/50 bg-card/50 h-full flex items-center justify-center border-dashed">
            <div className="text-center text-muted-foreground">
