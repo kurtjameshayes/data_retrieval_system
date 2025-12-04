@@ -89,7 +89,7 @@ export default function QueryBuilder() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label>Target Connector</Label>
+              <Label>Source Connector</Label>
               <Select onValueChange={setSelectedConnectorId} value={selectedConnectorId}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select a data source..." />
