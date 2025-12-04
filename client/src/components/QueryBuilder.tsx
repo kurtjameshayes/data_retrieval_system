@@ -3,6 +3,7 @@ import { useAppStore, Connector, Query } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -19,7 +20,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { Play, Plus, Trash2, Save, Terminal } from "lucide-react";
+import { Play, Plus, Trash2, Save, Terminal, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 export default function QueryBuilder() {
@@ -29,6 +30,9 @@ export default function QueryBuilder() {
   const [selectedConnectorId, setSelectedConnectorId] = useState<string>("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [notes, setNotes] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState("");
   const [queryId, setQueryId] = useState("");
   const [endpoint, setEndpoint] = useState("");
   const [method, setMethod] = useState<"GET" | "POST" | "PUT" | "DELETE">("GET");
@@ -49,6 +53,20 @@ export default function QueryBuilder() {
     const newParams = [...params];
     newParams[index][field] = value;
     setParams(newParams);
+  };
+
+  const handleAddTag = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && tagInput.trim()) {
+      e.preventDefault();
+      if (!tags.includes(tagInput.trim())) {
+        setTags([...tags, tagInput.trim()]);
+      }
+      setTagInput("");
+    }
+  };
+
+  const handleRemoveTag = (tagToRemove: string) => {
+    setTags(tags.filter(tag => tag !== tagToRemove));
   };
 
   const handleSaveQuery = () => {
@@ -74,6 +92,8 @@ export default function QueryBuilder() {
       connectorId: selectedConnectorId,
       name,
       description,
+      notes,
+      tags,
       queryId,
       endpoint,
       method,
@@ -88,6 +108,8 @@ export default function QueryBuilder() {
     // Reset form partially
     setName("");
     setDescription("");
+    setNotes("");
+    setTags([]);
     setQueryId("");
   };
 
@@ -147,6 +169,39 @@ export default function QueryBuilder() {
                 onChange={(e) => setDescription(e.target.value)} 
                 placeholder="Brief explanation of what this query does..." 
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Notes</Label>
+              <Textarea 
+                value={notes} 
+                onChange={(e) => setNotes(e.target.value)} 
+                placeholder="Detailed notes, implementation details, or usage instructions..." 
+                className="h-20 resize-none"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Tags</Label>
+              <div className="space-y-2">
+                <Input 
+                  value={tagInput} 
+                  onChange={(e) => setTagInput(e.target.value)} 
+                  onKeyDown={handleAddTag}
+                  placeholder="Type tag and press Enter..." 
+                />
+                <div className="flex flex-wrap gap-2 min-h-[24px]">
+                  {tags.map((tag) => (
+                    <Badge key={tag} variant="secondary" className="flex items-center gap-1 hover:bg-secondary/80">
+                      {tag}
+                      <X 
+                        className="h-3 w-3 cursor-pointer hover:text-destructive" 
+                        onClick={() => handleRemoveTag(tag)}
+                      />
+                    </Badge>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <div className="grid grid-cols-4 gap-2">
