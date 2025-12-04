@@ -133,7 +133,14 @@ def display_results(result: Dict[str, Any]):
 
     payload = result.get("data", {})
     metadata = payload.get("metadata", {})
-    records = payload.get("data", [])
+    records_payload = payload.get("data", [])
+
+    if isinstance(records_payload, dict):
+        # FBI connector nests the actual time-series array under 'data'
+        metadata = metadata or records_payload.get("metadata", {})
+        records = records_payload.get("data", [])
+    else:
+        records = records_payload
 
     print(f"\nQuery: {result.get('query_name', QUERY_ID)}")
     print(f"Source: {result.get('source', 'unknown')}")
