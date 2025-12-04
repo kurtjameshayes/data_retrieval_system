@@ -1,0 +1,224 @@
+import { useState } from "react";
+import { useAppStore, Connector, Query } from "@/lib/store";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardFooter,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { Play, Plus, Trash2, Save, Terminal } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+
+export default function QueryBuilder() {
+  const { connectors, addQuery, queries, runQuery } = useAppStore();
+  const { toast } = useToast();
+  
+  const [selectedConnectorId, setSelectedConnectorId] = useState<string>("");
+  const [name, setName] = useState("");
+  const [endpoint, setEndpoint] = useState("");
+  const [method, setMethod] = useState<"GET" | "POST" | "PUT" | "DELETE">("GET");
+  const [params, setParams] = useState<{ key: string; value: string; enabled: boolean }[]>([]);
+  
+  // For displaying the "active" query being built
+  const selectedConnector = connectors.find(c => c.id === selectedConnectorId);
+
+  const handleAddParam = () => {
+    setParams([...params, { key: "", value: "", enabled: true }]);
+  };
+
+  const handleRemoveParam = (index: number) => {
+    setParams(params.filter((_, i) => i !== index));
+  };
+
+  const handleUpdateParam = (index: number, field: "key" | "value", value: string) => {
+    const newParams = [...params];
+    newParams[index][field] = value;
+    setParams(newParams);
+  };
+
+  const handleSaveQuery = () => {
+    if (!selectedConnectorId || !name || !endpoint) {
+      toast({
+        variant: "destructive",
+        title: "Validation Error",
+        description: "Please fill in all required fields.",
+      });
+      return;
+    }
+
+    addQuery({
+      connectorId: selectedConnectorId,
+      name,
+      endpoint,
+      method,
+      params: params.map((p, i) => ({ ...p, id: `p_${i}` })),
+    });
+
+    toast({
+      title: "Query Saved",
+      description: "Query has been added to the library.",
+    });
+    
+    // Reset form partially
+    setName("");
+  };
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-12 h-[calc(100vh-8rem)]">
+      {/* Configuration Panel */}
+      <div className="lg:col-span-4 flex flex-col gap-6 h-full overflow-y-auto pr-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Terminal className="h-5 w-5 text-primary" />
+              Query Definition
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>Target Connector</Label>
+              <Select onValueChange={setSelectedConnectorId} value={selectedConnectorId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a data source..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {connectors.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name} <span className="text-muted-foreground ml-2 text-xs">({c.type})</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-2">
+              <Label>Query Name</Label>
+              <Input 
+                value={name} 
+                onChange={(e) => setName(e.target.value)} 
+                placeholder="e.g. Get Active Users" 
+              />
+            </div>
+
+            <div className="grid grid-cols-4 gap-2">
+              <div className="col-span-1">
+                <Label>Method</Label>
+                <Select value={method} onValueChange={(v: any) => setMethod(v)}>
+                  <SelectTrigger>
+                     <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="GET">GET</SelectItem>
+                    <SelectItem value="POST">POST</SelectItem>
+                    <SelectItem value="PUT">PUT</SelectItem>
+                    <SelectItem value="DELETE">DEL</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="col-span-3">
+                <Label>Endpoint Path</Label>
+                <Input 
+                  value={endpoint} 
+                  onChange={(e) => setEndpoint(e.target.value)} 
+                  placeholder="/users/active" 
+                  className="font-mono text-sm"
+                />
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Query Parameters</Label>
+                <Button variant="ghost" size="sm" onClick={handleAddParam} className="h-6 w-6 p-0">
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              
+              <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                {params.map((param, index) => (
+                  <div key={index} className="flex gap-2 items-center">
+                    <Input 
+                      value={param.key} 
+                      onChange={(e) => handleUpdateParam(index, "key", e.target.value)}
+                      placeholder="Key"
+                      className="h-8 font-mono text-xs"
+                    />
+                    <Input 
+                      value={param.value} 
+                      onChange={(e) => handleUpdateParam(index, "value", e.target.value)}
+                      placeholder="Value"
+                      className="h-8 font-mono text-xs"
+                    />
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-8 w-8 shrink-0"
+                      onClick={() => handleRemoveParam(index)}
+                    >
+                      <Trash2 className="h-3 w-3 text-muted-foreground" />
+                    </Button>
+                  </div>
+                ))}
+                {params.length === 0 && (
+                  <p className="text-xs text-muted-foreground text-center py-2 border border-dashed rounded">
+                    No parameters defined
+                  </p>
+                )}
+              </div>
+            </div>
+          </CardContent>
+          <CardFooter>
+            <Button onClick={handleSaveQuery} className="w-full">
+              <Save className="h-4 w-4 mr-2" /> Save Query
+            </Button>
+          </CardFooter>
+        </Card>
+      </div>
+
+      {/* Execution & Results Panel */}
+      <div className="lg:col-span-8 flex flex-col h-full">
+        <Card className="flex-1 flex flex-col overflow-hidden border-sidebar-border/50 bg-card/50 backdrop-blur-sm">
+          <div className="p-4 border-b border-sidebar-border bg-sidebar/50 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="font-mono text-xs bg-background">
+                {method}
+              </Badge>
+              <span className="font-mono text-sm text-muted-foreground">
+                {selectedConnector ? selectedConnector.baseUrl : "..."}{endpoint}
+              </span>
+            </div>
+            {/* Run button for the CURRENT unsaved query - simplified for prototype to just save first */}
+            <Badge variant="secondary">Preview Mode</Badge>
+          </div>
+          
+          <div className="flex-1 p-8 flex items-center justify-center bg-black/5">
+            <div className="text-center space-y-4 max-w-md">
+              <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto">
+                <Terminal className="h-8 w-8 text-primary" />
+              </div>
+              <h3 className="text-xl font-medium">Ready to Build</h3>
+              <p className="text-muted-foreground">
+                Configure your query on the left. Once saved, you can execute it from the library or dashboard.
+              </p>
+            </div>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
