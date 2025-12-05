@@ -150,6 +150,12 @@ export const api = {
     if (!res.ok) throw new Error('Failed to delete connector');
   },
 
+  async testConnector(id: string): Promise<{ success: boolean; status?: number; statusText?: string; responseTime: number; url: string; message?: string; error?: string }> {
+    const res = await fetch(`/api/connectors/${id}/test`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to test connector');
+    return res.json();
+  },
+
   // Queries
   async getQueries(): Promise<Query[]> {
     const res = await fetch('/api/queries');
@@ -194,10 +200,11 @@ export const api = {
     if (!res.ok) throw new Error('Failed to delete query');
   },
 
-  async runQuery(id: string): Promise<{ query: Query; result: QueryResult }> {
+  async runQuery(id: string, options?: { saveToResults?: boolean }): Promise<{ query: Query; result: QueryResult }> {
     const res = await fetch(`/api/queries/${id}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ saveToResults: options?.saveToResults !== false }),
     });
     if (!res.ok) throw new Error('Failed to run query');
     return res.json();

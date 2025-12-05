@@ -107,6 +107,69 @@ export async function registerRoutes(
     }
   });
 
+  // Test connector endpoint - verify URL is reachable
+  app.post("/api/connectors/:id/test", async (req, res) => {
+    try {
+      const connector = await storage.getConnector(req.params.id);
+      if (!connector) {
+        return res.status(404).json({ error: "Connector not found" });
+      }
+
+      const startTime = Date.now();
+      
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        
+        const response = await fetch(connector.url, {
+          method: "HEAD",
+          signal: controller.signal,
+          headers: connector.apiKey ? { 
+            "Authorization": `Bearer ${connector.apiKey}`,
+            "X-Api-Key": connector.apiKey 
+          } : {},
+        });
+        
+        clearTimeout(timeoutId);
+        const responseTime = Date.now() - startTime;
+        
+        res.json({
+          success: response.ok || response.status === 405,
+          status: response.status,
+          statusText: response.statusText,
+          responseTime,
+          url: connector.url,
+          message: response.ok 
+            ? `Connection successful (${response.status} ${response.statusText})`
+            : response.status === 405 
+              ? `Endpoint reachable (HEAD not allowed, but server responded)`
+              : `Server responded with ${response.status} ${response.statusText}`,
+        });
+      } catch (fetchError: any) {
+        const responseTime = Date.now() - startTime;
+        
+        if (fetchError.name === "AbortError") {
+          res.json({
+            success: false,
+            error: "Connection timeout after 10 seconds",
+            responseTime,
+            url: connector.url,
+          });
+        } else {
+          res.json({
+            success: false,
+            error: fetchError.message || "Failed to connect",
+            responseTime,
+            url: connector.url,
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Error testing connector:", error);
+      res.status(500).json({ error: "Failed to test connector" });
+    }
+  });
+
   // Query routes
   app.get("/api/queries", async (req, res) => {
     try {
@@ -203,6 +266,7 @@ export async function registerRoutes(
       const pythonScript = path.join(process.cwd(), "python_src", "run_query.py");
       const useCache = req.body?.useCache !== false;
       const parameterOverrides = req.body?.parameterOverrides;
+      const saveToResults = req.body?.saveToResults !== false;
       
       const args = [pythonScript, query.queryId];
       if (!useCache) {
@@ -247,16 +311,18 @@ export async function registerRoutes(
 
           // Store result in query_results collection (if it fails, still return Python result)
           let queryResult = null;
-          try {
-            queryResult = await storage.createQueryResult({
-              queryId: query.queryId,
-              result: result.success ? (result.data || result) : { error: result.error },
-              status: result.success ? "success" : "error",
-              error: result.error || null,
-            });
-          } catch (storageError) {
-            console.error("Failed to store query result:", storageError);
-            // Continue without storing - Python result is still valid
+          if (saveToResults) {
+            try {
+              queryResult = await storage.createQueryResult({
+                queryId: query.queryId,
+                result: result.success ? (result.data || result) : { error: result.error },
+                status: result.success ? "success" : "error",
+                error: result.error || null,
+              });
+            } catch (storageError) {
+              console.error("Failed to store query result:", storageError);
+              // Continue without storing - Python result is still valid
+            }
           }
 
           if (result.success) {

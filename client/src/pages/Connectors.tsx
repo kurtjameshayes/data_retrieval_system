@@ -1,17 +1,21 @@
-import { useAppStore, api } from "@/lib/store";
+import { useAppStore, api, type Connector } from "@/lib/store";
 import ConnectorBuilder from "@/components/ConnectorBuilder";
+import EditConnectorDialog from "@/components/EditConnectorDialog";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Trash2, Globe, Key, FileText, ExternalLink } from "lucide-react";
+import { Trash2, Globe, Key, FileText, ExternalLink, Pencil, Zap, Loader2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Connectors() {
   const { connectors, setConnectors } = useAppStore();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const [editConnector, setEditConnector] = useState<Connector | null>(null);
+  const [testingConnector, setTestingConnector] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, any>>({});
 
   const { data: connectorsData } = useQuery({
     queryKey: ['connectors'],
@@ -40,6 +44,29 @@ export default function Connectors() {
       });
     },
   });
+
+  const handleTestConnector = async (connector: Connector) => {
+    setTestingConnector(connector.id);
+    try {
+      const result = await api.testConnector(connector.id);
+      setTestResults(prev => ({ ...prev, [connector.id]: result }));
+      toast({
+        title: result.success ? "Connection Successful" : "Connection Failed",
+        description: result.success 
+          ? `${result.message} (${result.responseTime}ms)`
+          : result.error,
+        variant: result.success ? "default" : "destructive",
+      });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Test Failed",
+        description: "Failed to test connector",
+      });
+    } finally {
+      setTestingConnector(null);
+    }
+  };
 
   return (
     <div className="space-y-8">
@@ -105,16 +132,42 @@ export default function Connectors() {
               </CardContent>
               <CardFooter className="pt-0 flex justify-between items-center">
                 <span className="text-xs text-muted-foreground font-mono">{connector.sourceId}</span>
-                 <Button 
-                   variant="ghost" 
-                   size="sm" 
-                   className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                   onClick={() => deleteMutation.mutate(connector.id)}
-                   disabled={deleteMutation.isPending}
-                   data-testid={`button-delete-connector-${connector.id}`}
-                 >
-                   <Trash2 className="h-4 w-4" />
-                 </Button>
+                <div className="flex items-center gap-1">
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => handleTestConnector(connector)}
+                    disabled={testingConnector === connector.id}
+                    data-testid={`button-test-connector-${connector.id}`}
+                    title="Test connection"
+                  >
+                    {testingConnector === connector.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Zap className={`h-4 w-4 ${testResults[connector.id]?.success === true ? 'text-green-500' : testResults[connector.id]?.success === false ? 'text-red-500' : ''}`} />
+                    )}
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => setEditConnector(connector)}
+                    data-testid={`button-edit-connector-${connector.id}`}
+                    title="Edit connector"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={() => deleteMutation.mutate(connector.id)}
+                    disabled={deleteMutation.isPending}
+                    data-testid={`button-delete-connector-${connector.id}`}
+                    title="Delete connector"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </CardFooter>
             </Card>
           ))}
@@ -125,6 +178,12 @@ export default function Connectors() {
           )}
         </div>
       </div>
+
+      <EditConnectorDialog
+        connector={editConnector}
+        open={!!editConnector}
+        onOpenChange={(open) => !open && setEditConnector(null)}
+      />
     </div>
   );
 }

@@ -1,9 +1,11 @@
 import { useAppStore, api, type Query, useNotificationStore } from "@/lib/store";
 import QueryBuilder from "@/components/QueryBuilder";
+import EditQueryDialog from "@/components/EditQueryDialog";
+import DataTablePreview from "@/components/DataTablePreview";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Play, Loader2, CheckCircle2, XCircle, Eye, Tag } from "lucide-react";
+import { Play, Loader2, CheckCircle2, XCircle, Eye, Tag, Pencil, Table } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
@@ -14,6 +16,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Queries() {
   const { queries, setQueries } = useAppStore();
@@ -21,10 +24,12 @@ export default function Queries() {
   const queryClient = useQueryClient();
   const [runningQueries, setRunningQueries] = useState<Set<string>>(new Set());
   const [notificationIds, setNotificationIds] = useState<Map<string, string>>(new Map());
-  const [resultDialog, setResultDialog] = useState<{ open: boolean; query: Query | null; result: any }>({
+  const [editQuery, setEditQuery] = useState<Query | null>(null);
+  const [resultDialog, setResultDialog] = useState<{ open: boolean; query: Query | null; result: any; pythonResult?: any }>({
     open: false,
     query: null,
     result: null,
+    pythonResult: null,
   });
 
   const { data: queriesData } = useQuery({
@@ -78,7 +83,8 @@ export default function Queries() {
         });
       }
       
-      setResultDialog({ open: true, query: data.query, result: data.result });
+      const pythonResult = (data as any).pythonResult;
+      setResultDialog({ open: true, query: data.query, result: data.result, pythonResult });
       queryClient.invalidateQueries({ queryKey: ['queries'] });
     },
     onError: (error, id) => {
@@ -148,7 +154,16 @@ export default function Queries() {
                     <Badge variant="secondary" className="text-xs">+{query.tags.length - 3}</Badge>
                   )}
                 </div>
-                <div className="col-span-2 text-right">
+                <div className="col-span-2 text-right flex items-center justify-end gap-1">
+                  <Button 
+                    size="sm" 
+                    variant="ghost"
+                    onClick={() => setEditQuery(query)}
+                    data-testid={`button-edit-query-${query.id}`}
+                    title="Edit query"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </Button>
                   <Button 
                     size="sm" 
                     variant="outline" 
@@ -175,20 +190,57 @@ export default function Queries() {
       </div>
 
       <Dialog open={resultDialog.open} onOpenChange={(open) => setResultDialog(prev => ({ ...prev, open }))}>
-        <DialogContent className="max-w-4xl max-h-[80vh]">
+        <DialogContent className="max-w-5xl max-h-[85vh]">
           <DialogHeader>
             <DialogTitle>Query Result: {resultDialog.query?.queryName}</DialogTitle>
-            <DialogDescription>
-              Executed at {resultDialog.result?.executedAt ? new Date(resultDialog.result.executedAt).toLocaleString() : 'N/A'}
+            <DialogDescription className="flex items-center gap-4">
+              <span>Executed at {resultDialog.result?.executedAt ? new Date(resultDialog.result.executedAt).toLocaleString() : 'N/A'}</span>
+              {resultDialog.pythonResult?.record_count && (
+                <Badge variant="secondary">{resultDialog.pythonResult.record_count} records</Badge>
+              )}
+              {resultDialog.pythonResult?.source && (
+                <Badge variant="outline">{resultDialog.pythonResult.source}</Badge>
+              )}
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="max-h-[60vh]">
-            <pre className="p-4 bg-muted rounded-lg text-xs font-mono overflow-x-auto">
-              {JSON.stringify(resultDialog.result?.result, null, 2)}
-            </pre>
-          </ScrollArea>
+          
+          <Tabs defaultValue="table" className="mt-2">
+            <TabsList>
+              <TabsTrigger value="table" data-testid="result-tab-table">
+                <Table className="h-3 w-3 mr-2" />
+                Table View
+              </TabsTrigger>
+              <TabsTrigger value="json" data-testid="result-tab-json">
+                JSON
+              </TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="table" className="mt-4">
+              {resultDialog.pythonResult?.data ? (
+                <DataTablePreview data={resultDialog.pythonResult.data} maxRows={200} />
+              ) : (
+                <div className="text-center text-muted-foreground py-8">
+                  No tabular data available
+                </div>
+              )}
+            </TabsContent>
+            
+            <TabsContent value="json" className="mt-4">
+              <ScrollArea className="max-h-[50vh]">
+                <pre className="p-4 bg-muted rounded-lg text-xs font-mono overflow-x-auto">
+                  {JSON.stringify(resultDialog.pythonResult || resultDialog.result?.result, null, 2)}
+                </pre>
+              </ScrollArea>
+            </TabsContent>
+          </Tabs>
         </DialogContent>
       </Dialog>
+
+      <EditQueryDialog
+        query={editQuery}
+        open={!!editQuery}
+        onOpenChange={(open) => !open && setEditQuery(null)}
+      />
     </div>
   );
 }
