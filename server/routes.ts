@@ -1,5 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { spawn } from "child_process";
+import path from "path";
 import { storage, type InsertConnector, type InsertQuery } from "./storage";
 import { z } from "zod";
 import { fromZodError } from "zod-validation-error";
@@ -187,7 +189,7 @@ export async function registerRoutes(
     }
   });
 
-  // Query execution
+  // Query execution via Python subprocess
   app.post("/api/queries/:id/run", async (req, res) => {
     try {
       const id = req.params.id;
@@ -197,57 +199,107 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Query not found" });
       }
 
-      // Get connector by source_id (connector_id in query references source_id)
-      const connector = await storage.getConnectorBySourceId(query.connectorId);
-      if (!connector) {
-        return res.status(404).json({ error: `Connector '${query.connectorId}' not found` });
+      // Execute query via Python subprocess
+      const pythonScript = path.join(process.cwd(), "python_src", "run_query.py");
+      const useCache = req.body?.useCache !== false;
+      const parameterOverrides = req.body?.parameterOverrides;
+      
+      const args = [pythonScript, query.queryId];
+      if (!useCache) {
+        args.push("--no-cache");
+      }
+      if (parameterOverrides) {
+        args.push(JSON.stringify(parameterOverrides));
       }
 
-      // Build the request URL with parameters
-      const params = new URLSearchParams();
-      if (query.parameters) {
-        Object.entries(query.parameters).forEach(([key, value]) => {
-          if (value !== undefined && value !== null) {
-            params.append(key, String(value));
+      const pythonProcess = spawn("python3", args, {
+        env: { ...process.env },
+        cwd: process.cwd(),
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      pythonProcess.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      pythonProcess.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      pythonProcess.on("close", async (code) => {
+        console.log(`Python process exited with code ${code}`);
+        if (stderr) {
+          console.log("Python stderr:", stderr);
+        }
+
+        try {
+          let result;
+          if (stdout.trim()) {
+            result = JSON.parse(stdout.trim());
+          } else {
+            result = {
+              success: false,
+              error: stderr || "No output from Python script",
+            };
           }
+
+          // Store result in query_results collection (if it fails, still return Python result)
+          let queryResult = null;
+          try {
+            queryResult = await storage.createQueryResult({
+              queryId: query.queryId,
+              result: result.success ? (result.data || result) : { error: result.error },
+              status: result.success ? "success" : "error",
+              error: result.error || null,
+            });
+          } catch (storageError) {
+            console.error("Failed to store query result:", storageError);
+            // Continue without storing - Python result is still valid
+          }
+
+          if (result.success) {
+            res.json({ query, result: queryResult, pythonResult: result });
+          } else {
+            res.status(500).json({ query, result: queryResult, pythonResult: result, error: result.error });
+          }
+        } catch (parseError) {
+          console.error("Failed to parse Python output:", parseError);
+          console.log("Raw stdout:", stdout);
+          
+          const queryResult = await storage.createQueryResult({
+            queryId: query.queryId,
+            result: { error: "Failed to parse Python output", raw: stdout.substring(0, 500) },
+            status: "error",
+            error: `Failed to parse Python output: ${stdout.substring(0, 500)}`,
+          });
+
+          res.status(500).json({ 
+            error: "Failed to parse query result",
+            query,
+            result: queryResult,
+          });
+        }
+      });
+
+      pythonProcess.on("error", async (error) => {
+        console.error("Failed to spawn Python process:", error);
+        
+        const queryResult = await storage.createQueryResult({
+          queryId: query.queryId,
+          result: { error: `Failed to spawn Python process: ${error.message}` },
+          status: "error",
+          error: `Failed to spawn Python process: ${error.message}`,
         });
-      }
 
-      // Add API key if available
-      if (connector.apiKey) {
-        params.append('key', connector.apiKey);
-      }
-
-      const url = `${connector.url}?${params.toString()}`;
-
-      // Build headers
-      const headers: Record<string, string> = {
-        'Accept': 'application/json',
-      };
-
-      // Execute the API call
-      const response = await fetch(url, {
-        method: 'GET',
-        headers,
+        res.status(500).json({ 
+          error: "Failed to execute Python script",
+          query,
+          result: queryResult,
+        });
       });
 
-      let data;
-      const contentType = response.headers.get('content-type');
-      if (contentType && contentType.includes('application/json')) {
-        data = await response.json();
-      } else {
-        data = await response.text();
-      }
-
-      // Store result in query_results collection
-      const queryResult = await storage.createQueryResult({
-        queryId: query.queryId,
-        result: data,
-        status: response.ok ? 'success' : 'error',
-        error: response.ok ? null : `HTTP ${response.status}`,
-      });
-
-      res.json({ query, result: queryResult });
     } catch (error) {
       console.error("Error running query:", error);
       
@@ -257,9 +309,9 @@ export async function registerRoutes(
         if (query) {
           await storage.createQueryResult({
             queryId: query.queryId,
-            result: null,
-            status: 'error',
-            error: error instanceof Error ? error.message : 'Unknown error',
+            result: { error: error instanceof Error ? error.message : "Unknown error" },
+            status: "error",
+            error: error instanceof Error ? error.message : "Unknown error",
           });
         }
       } catch (e) {
