@@ -5,7 +5,7 @@ import DataTablePreview from "@/components/DataTablePreview";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Play, Loader2, CheckCircle2, XCircle, Eye, Tag, Pencil, Table } from "lucide-react";
+import { Play, Loader2, Pencil, Table } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
@@ -126,33 +126,24 @@ export default function Queries() {
         <h3 className="text-lg font-medium mb-4">Query Library</h3>
         <div className="border rounded-lg bg-card/50 overflow-hidden">
           <div className="grid grid-cols-12 gap-4 p-4 border-b bg-muted/30 text-xs font-medium text-muted-foreground">
-            <div className="col-span-3">NAME</div>
-            <div className="col-span-2">QUERY ID</div>
-            <div className="col-span-2">CONNECTOR</div>
-            <div className="col-span-3">TAGS</div>
+            <div className="col-span-4">NAME</div>
+            <div className="col-span-3">QUERY ID</div>
+            <div className="col-span-3">CONNECTOR</div>
             <div className="col-span-2 text-right">ACTIONS</div>
           </div>
           
           <div className="divide-y max-h-[500px] overflow-y-auto">
             {queries.map((query) => (
               <div key={query.id} className="grid grid-cols-12 gap-4 p-4 items-center hover:bg-muted/20 transition-colors" data-testid={`query-row-${query.id}`}>
-                <div className="col-span-3">
+                <div className="col-span-4">
                   <p className="font-medium text-sm truncate">{query.queryName}</p>
                   <p className="text-xs text-muted-foreground line-clamp-1">{query.description}</p>
                 </div>
-                <div className="col-span-2 text-xs font-mono text-muted-foreground truncate">
+                <div className="col-span-3 text-xs font-mono text-muted-foreground truncate">
                   {query.queryId}
                 </div>
-                <div className="col-span-2">
+                <div className="col-span-3">
                   <Badge variant="outline" className="font-mono text-xs">{query.connectorId}</Badge>
-                </div>
-                <div className="col-span-3 flex flex-wrap gap-1">
-                  {query.tags?.slice(0, 3).map((tag) => (
-                    <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
-                  ))}
-                  {query.tags && query.tags.length > 3 && (
-                    <Badge variant="secondary" className="text-xs">+{query.tags.length - 3}</Badge>
-                  )}
                 </div>
                 <div className="col-span-2 text-right flex items-center justify-end gap-1">
                   <Button 
