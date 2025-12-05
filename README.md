@@ -64,6 +64,31 @@ python main.py
 
 Server runs at `http://localhost:5000`
 
+### Execute Stored Analysis Plans
+
+Use the dedicated CLI helper to run any persisted analysis plan:
+
+```bash
+# Basic execution
+python execute_analysis_plan.py --plan-id my_plan
+
+# Apply runtime overrides from a JSON file and write results to disk
+python execute_analysis_plan.py \
+  --plan-id my_plan \
+  --overrides-file overrides.json \
+  --no-cache \
+  --output-json my_plan_results.json
+```
+
+Each overrides JSON object should map `query_id` -> parameter overrides, for example:
+
+```json
+{
+  "census_income": {"year": "2023"},
+  "usda_crops": {"commodity_desc": "SOYBEANS"}
+}
+```
+
 ## API Endpoints
 
 ### Sources
