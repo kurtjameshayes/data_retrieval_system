@@ -14,20 +14,27 @@ export default function DataTablePreview({ data, maxRows = 100 }: DataTablePrevi
   const [search, setSearch] = useState("");
   const pageSize = 20;
 
+  const safeData = useMemo(() => {
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
+    if (typeof data === 'object') return [data];
+    return [];
+  }, [data]);
+
   const columns = useMemo(() => {
-    if (!data || data.length === 0) return [];
+    if (safeData.length === 0) return [];
     const allKeys = new Set<string>();
-    data.forEach(row => {
+    safeData.forEach(row => {
       if (row && typeof row === 'object') {
         Object.keys(row).forEach(key => allKeys.add(key));
       }
     });
     return Array.from(allKeys);
-  }, [data]);
+  }, [safeData]);
 
   const filteredData = useMemo(() => {
-    if (!data) return [];
-    const limited = data.slice(0, maxRows);
+    if (safeData.length === 0) return [];
+    const limited = safeData.slice(0, maxRows);
     if (!search) return limited;
     
     const searchLower = search.toLowerCase();
@@ -47,10 +54,10 @@ export default function DataTablePreview({ data, maxRows = 100 }: DataTablePrevi
   const totalPages = Math.ceil(filteredData.length / pageSize);
 
   const handleDownloadCsv = () => {
-    if (!data || data.length === 0) return;
+    if (safeData.length === 0) return;
     
     const headers = columns.join(",");
-    const rows = data.slice(0, maxRows).map(row => 
+    const rows = safeData.slice(0, maxRows).map(row => 
       columns.map(col => {
         const val = row?.[col];
         if (val === null || val === undefined) return "";
@@ -71,7 +78,7 @@ export default function DataTablePreview({ data, maxRows = 100 }: DataTablePrevi
     URL.revokeObjectURL(url);
   };
 
-  if (!data || data.length === 0) {
+  if (safeData.length === 0) {
     return (
       <div className="border rounded-lg p-8 text-center text-muted-foreground">
         No data to display
@@ -97,7 +104,7 @@ export default function DataTablePreview({ data, maxRows = 100 }: DataTablePrevi
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            {filteredData.length} of {Math.min(data.length, maxRows)} rows {data.length > maxRows && `(${data.length} total, showing first ${maxRows})`}
+            {filteredData.length} of {Math.min(safeData.length, maxRows)} rows {safeData.length > maxRows && `(${safeData.length} total, showing first ${maxRows})`}
           </span>
           <Button
             variant="outline"
