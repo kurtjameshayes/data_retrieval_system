@@ -1,5 +1,74 @@
 import { create } from 'zustand';
 
+// Notification types
+export type NotificationType = 'info' | 'success' | 'error' | 'loading';
+
+export interface Notification {
+  id: string;
+  type: NotificationType;
+  title: string;
+  message?: string;
+  queryId?: string;
+  queryName?: string;
+  duration?: number;
+  createdAt: number;
+}
+
+interface NotificationState {
+  notifications: Notification[];
+  addNotification: (notification: Omit<Notification, 'id' | 'createdAt'>) => string;
+  removeNotification: (id: string) => void;
+  updateNotification: (id: string, updates: Partial<Notification>) => void;
+  clearAll: () => void;
+}
+
+export const useNotificationStore = create<NotificationState>((set, get) => ({
+  notifications: [],
+  
+  addNotification: (notification) => {
+    const id = `notif-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const newNotification: Notification = {
+      ...notification,
+      id,
+      createdAt: Date.now(),
+    };
+    
+    set((state) => ({
+      notifications: [...state.notifications, newNotification],
+    }));
+    
+    if (notification.duration && notification.duration > 0) {
+      setTimeout(() => {
+        get().removeNotification(id);
+      }, notification.duration);
+    }
+    
+    return id;
+  },
+  
+  removeNotification: (id) => {
+    set((state) => ({
+      notifications: state.notifications.filter((n) => n.id !== id),
+    }));
+  },
+  
+  updateNotification: (id, updates) => {
+    set((state) => ({
+      notifications: state.notifications.map((n) =>
+        n.id === id ? { ...n, ...updates } : n
+      ),
+    }));
+    
+    if (updates.duration && updates.duration > 0) {
+      setTimeout(() => {
+        get().removeNotification(id);
+      }, updates.duration);
+    }
+  },
+  
+  clearAll: () => set({ notifications: [] }),
+}));
+
 export interface Connector {
   id: string;
   sourceId: string;
