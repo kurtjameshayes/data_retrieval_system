@@ -273,7 +273,44 @@ export async function registerRoutes(
       const parameterOverrides = req.body?.parameterOverrides || {};
       const saveToResults = req.body?.saveToResults !== false;
       
-      const mergedParameters = { ...query.parameters, ...parameterOverrides };
+      // Deep serialize parameters to handle MongoDB-specific types (ObjectId, Date, etc)
+      const serializeForJson = (obj: any): any => {
+        if (obj === null || obj === undefined) return obj;
+        if (typeof obj !== 'object') return obj;
+        if (obj instanceof Date) return obj.toISOString();
+        if (typeof obj.toJSON === 'function') return obj.toJSON();
+        if (Array.isArray(obj)) return obj.map(serializeForJson);
+        const result: Record<string, any> = {};
+        for (const [key, value] of Object.entries(obj)) {
+          result[key] = serializeForJson(value);
+        }
+        return result;
+      };
+      
+      const baseParams = serializeForJson(query.parameters || {});
+      
+      // Deep merge function to handle nested parameter overrides
+      const deepMerge = (target: any, source: any): any => {
+        if (source === null || source === undefined) return target;
+        if (typeof source !== 'object' || Array.isArray(source)) return source;
+        if (typeof target !== 'object' || Array.isArray(target)) return source;
+        
+        const result = { ...target };
+        for (const key of Object.keys(source)) {
+          if (key in result && typeof result[key] === 'object' && typeof source[key] === 'object' 
+              && !Array.isArray(result[key]) && !Array.isArray(source[key])) {
+            result[key] = deepMerge(result[key], source[key]);
+          } else {
+            result[key] = source[key];
+          }
+        }
+        return result;
+      };
+      
+      // If parameterOverrides contains complete substituted params, use those; otherwise deep merge
+      const mergedParameters = Object.keys(parameterOverrides).length > 0 
+        ? deepMerge(baseParams, parameterOverrides)
+        : baseParams;
 
       // Execute query via Python QueryEngine.execute_query (same as execute_query.py)
       const pythonScript = path.join(process.cwd(), "python_src", "execute_query.py");

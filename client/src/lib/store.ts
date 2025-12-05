@@ -201,11 +201,15 @@ export const api = {
     if (!res.ok) throw new Error('Failed to delete query');
   },
 
-  async runQuery(id: string, options?: { saveToResults?: boolean }): Promise<{ query: Query; result: QueryResult }> {
+  async runQuery(id: string, parameterOverrides?: Record<string, any>, options?: { saveToResults?: boolean }): Promise<{ query: Query; result: QueryResult }> {
+    const body: any = { saveToResults: options?.saveToResults !== false };
+    if (parameterOverrides && Object.keys(parameterOverrides).length > 0) {
+      body.parameterOverrides = parameterOverrides;
+    }
     const res = await fetch(`/api/queries/${id}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ saveToResults: options?.saveToResults !== false }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error('Failed to run query');
     return res.json();

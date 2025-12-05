@@ -83,7 +83,7 @@ export default function EditQueryDialog({ query, open, onOpenChange }: EditQuery
     });
     
     try {
-      const result = await api.runQuery(query.id, { saveToResults });
+      const result = await api.runQuery(query.id, undefined, { saveToResults });
       const pythonResult = (result as any).pythonResult;
       
       setTestResult({

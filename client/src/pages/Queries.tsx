@@ -5,18 +5,54 @@ import DataTablePreview from "@/components/DataTablePreview";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Play, Loader2, Pencil, Table, AlertCircle } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+function extractPlaceholders(parameters: Record<string, any>): { paramKey: string; placeholder: string; hint: string }[] {
+  const placeholders: { paramKey: string; placeholder: string; hint: string }[] = [];
+  const seenPlaceholders = new Set<string>();
+  const placeholderRegex = /\{([^}]+)\}/g;
+  
+  const extractFromValue = (value: any, path: string): void => {
+    if (typeof value === 'string') {
+      let match;
+      placeholderRegex.lastIndex = 0;
+      while ((match = placeholderRegex.exec(value)) !== null) {
+        const placeholder = match[1];
+        if (!seenPlaceholders.has(placeholder)) {
+          seenPlaceholders.add(placeholder);
+          const hint = placeholder.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+          placeholders.push({ paramKey: path, placeholder, hint });
+        }
+      }
+    } else if (Array.isArray(value)) {
+      value.forEach((item, index) => extractFromValue(item, `${path}[${index}]`));
+    } else if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) {
+        extractFromValue(v, path ? `${path}.${k}` : k);
+      }
+    }
+  };
+  
+  for (const [key, value] of Object.entries(parameters)) {
+    extractFromValue(value, key);
+  }
+  
+  return placeholders;
+}
 
 function extractDataByPath(data: any, path: string | null | undefined): any[] {
   if (!path || !data) return [];
@@ -49,6 +85,17 @@ export default function Queries() {
     pythonResult: null,
     connector: null,
   });
+  const [paramDialog, setParamDialog] = useState<{ 
+    open: boolean; 
+    query: Query | null; 
+    placeholders: { paramKey: string; placeholder: string; hint: string }[];
+    values: Record<string, string>;
+  }>({
+    open: false,
+    query: null,
+    placeholders: [],
+    values: {},
+  });
 
   const { data: queriesData } = useQuery({
     queryKey: ['queries'],
@@ -69,8 +116,9 @@ export default function Queries() {
   }, [connectorsData, setConnectors]);
 
   const runMutation = useMutation({
-    mutationFn: api.runQuery,
-    onMutate: (id) => {
+    mutationFn: ({ id, parameterOverrides }: { id: string; parameterOverrides?: Record<string, any> }) => 
+      api.runQuery(id, parameterOverrides),
+    onMutate: ({ id }) => {
       setRunningQueries(prev => new Set(prev).add(id));
       const query = queries.find(q => q.id === id);
       const notifId = addNotification({
@@ -82,7 +130,7 @@ export default function Queries() {
       });
       setNotificationIds(prev => new Map(prev).set(id, notifId));
     },
-    onSuccess: (data, id) => {
+    onSuccess: (data, { id }) => {
       setRunningQueries(prev => {
         const next = new Set(prev);
         next.delete(id);
@@ -115,7 +163,7 @@ export default function Queries() {
       setResultDialog({ open: true, query: data.query, result: data.result, pythonResult, connector: queryConnector });
       queryClient.invalidateQueries({ queryKey: ['queries'] });
     },
-    onError: (error, id) => {
+    onError: (error, { id }) => {
       setRunningQueries(prev => {
         const next = new Set(prev);
         next.delete(id);
@@ -138,6 +186,56 @@ export default function Queries() {
       }
     },
   });
+
+  const handleRunQuery = useCallback((query: Query) => {
+    const placeholders = extractPlaceholders(query.parameters || {});
+    
+    if (placeholders.length > 0) {
+      const initialValues: Record<string, string> = {};
+      placeholders.forEach(p => {
+        initialValues[p.placeholder] = '';
+      });
+      setParamDialog({
+        open: true,
+        query,
+        placeholders,
+        values: initialValues,
+      });
+    } else {
+      runMutation.mutate({ id: query.id });
+    }
+  }, [runMutation]);
+
+  const handleRunWithParams = useCallback(() => {
+    if (!paramDialog.query) return;
+    
+    const substitutePlaceholders = (value: any, placeholderValues: Record<string, string>): any => {
+      if (typeof value === 'string') {
+        let result = value;
+        for (const [placeholder, inputValue] of Object.entries(placeholderValues)) {
+          result = result.replace(new RegExp(`\\{${placeholder}\\}`, 'g'), inputValue);
+        }
+        return result;
+      }
+      if (Array.isArray(value)) {
+        return value.map(item => substitutePlaceholders(item, placeholderValues));
+      }
+      if (value && typeof value === 'object') {
+        const result: Record<string, any> = {};
+        for (const [k, v] of Object.entries(value)) {
+          result[k] = substitutePlaceholders(v, placeholderValues);
+        }
+        return result;
+      }
+      return value;
+    };
+    
+    const params = paramDialog.query.parameters || {};
+    const parameterOverrides = substitutePlaceholders(params, paramDialog.values);
+    
+    setParamDialog(prev => ({ ...prev, open: false }));
+    runMutation.mutate({ id: paramDialog.query.id, parameterOverrides });
+  }, [paramDialog, runMutation]);
 
   return (
     <div className="space-y-8">
@@ -186,7 +284,7 @@ export default function Queries() {
                   <Button 
                     size="sm" 
                     variant="outline" 
-                    onClick={() => runMutation.mutate(query.id)}
+                    onClick={() => handleRunQuery(query)}
                     disabled={runningQueries.has(query.id)}
                     data-testid={`button-run-query-${query.id}`}
                   >
@@ -270,13 +368,63 @@ export default function Queries() {
             </TabsContent>
             
             <TabsContent value="json" className="mt-4 flex-1 min-h-0 overflow-hidden">
-              <ScrollArea className="h-full max-h-[50vh]">
-                <pre className="p-4 bg-muted rounded-lg text-xs font-mono whitespace-pre-wrap break-words">
+              <div className="h-full max-h-[55vh] overflow-auto border rounded-lg bg-muted">
+                <pre className="p-4 text-xs font-mono whitespace-pre overflow-x-auto" data-testid="json-result-content">
                   {JSON.stringify(resultDialog.pythonResult || resultDialog.result?.result, null, 2)}
                 </pre>
-              </ScrollArea>
+              </div>
             </TabsContent>
           </Tabs>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={paramDialog.open} onOpenChange={(open) => setParamDialog(prev => ({ ...prev, open }))}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Enter Parameter Values</DialogTitle>
+            <DialogDescription>
+              This query requires the following values before it can be executed.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            {paramDialog.placeholders.map((p) => (
+              <div key={p.placeholder} className="space-y-2">
+                <Label htmlFor={`param-${p.placeholder}`} className="text-sm font-medium">
+                  {p.hint}
+                  <span className="text-xs text-muted-foreground ml-2 font-mono">({p.paramKey})</span>
+                </Label>
+                <Input
+                  id={`param-${p.placeholder}`}
+                  placeholder={`Enter ${p.hint.toLowerCase()}`}
+                  value={paramDialog.values[p.placeholder] || ''}
+                  onChange={(e) => setParamDialog(prev => ({
+                    ...prev,
+                    values: { ...prev.values, [p.placeholder]: e.target.value }
+                  }))}
+                  data-testid={`input-param-${p.placeholder}`}
+                />
+              </div>
+            ))}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setParamDialog(prev => ({ ...prev, open: false }))}
+              data-testid="button-cancel-params"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleRunWithParams}
+              disabled={paramDialog.placeholders.some(p => !paramDialog.values[p.placeholder]?.trim())}
+              data-testid="button-run-with-params"
+            >
+              <Play className="h-3 w-3 mr-2" />
+              Run Query
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
