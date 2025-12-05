@@ -1,4 +1,4 @@
-import { useAppStore, api, type Query } from "@/lib/store";
+import { useAppStore, api, type Query, useNotificationStore } from "@/lib/store";
 import QueryBuilder from "@/components/QueryBuilder";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,8 +17,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 export default function Queries() {
   const { queries, setQueries } = useAppStore();
+  const { addNotification, updateNotification } = useNotificationStore();
   const queryClient = useQueryClient();
   const [runningQueries, setRunningQueries] = useState<Set<string>>(new Set());
+  const [notificationIds, setNotificationIds] = useState<Map<string, string>>(new Map());
   const [resultDialog, setResultDialog] = useState<{ open: boolean; query: Query | null; result: any }>({
     open: false,
     query: null,
@@ -38,6 +40,15 @@ export default function Queries() {
     mutationFn: api.runQuery,
     onMutate: (id) => {
       setRunningQueries(prev => new Set(prev).add(id));
+      const query = queries.find(q => q.id === id);
+      const notifId = addNotification({
+        type: 'loading',
+        title: 'Query Running',
+        message: 'Executing query via Python QueryEngine...',
+        queryName: query?.queryName || id,
+        queryId: id,
+      });
+      setNotificationIds(prev => new Map(prev).set(id, notifId));
     },
     onSuccess: (data, id) => {
       setRunningQueries(prev => {
@@ -45,15 +56,52 @@ export default function Queries() {
         next.delete(id);
         return next;
       });
+      
+      const notifId = notificationIds.get(id);
+      if (notifId) {
+        const pythonResult = (data as any).pythonResult;
+        const recordCount = pythonResult?.record_count;
+        const source = pythonResult?.source;
+        
+        updateNotification(notifId, {
+          type: 'success',
+          title: 'Query Completed',
+          message: recordCount 
+            ? `Retrieved ${recordCount} records${source === 'cache' ? ' (from cache)' : ''}`
+            : 'Query executed successfully',
+          duration: 5000,
+        });
+        setNotificationIds(prev => {
+          const next = new Map(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+      
       setResultDialog({ open: true, query: data.query, result: data.result });
       queryClient.invalidateQueries({ queryKey: ['queries'] });
     },
-    onError: (_, id) => {
+    onError: (error, id) => {
       setRunningQueries(prev => {
         const next = new Set(prev);
         next.delete(id);
         return next;
       });
+      
+      const notifId = notificationIds.get(id);
+      if (notifId) {
+        updateNotification(notifId, {
+          type: 'error',
+          title: 'Query Failed',
+          message: error instanceof Error ? error.message : 'An error occurred while executing the query',
+          duration: 8000,
+        });
+        setNotificationIds(prev => {
+          const next = new Map(prev);
+          next.delete(id);
+          return next;
+        });
+      }
     },
   });
 
