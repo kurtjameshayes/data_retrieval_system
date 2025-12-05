@@ -39,9 +39,10 @@ export default function DataTablePreview({ data, maxRows = 100 }: DataTablePrevi
     const searchLower = search.toLowerCase();
     return limited.filter(row => {
       if (!row || typeof row !== 'object') return false;
-      return Object.values(row).some(val => 
-        String(val).toLowerCase().includes(searchLower)
-      );
+      return Object.values(row).some(val => {
+        const str = typeof val === 'object' && val !== null ? JSON.stringify(val) : String(val ?? '');
+        return str.toLowerCase().includes(searchLower);
+      });
     });
   }, [data, search, maxRows]);
 
@@ -60,7 +61,7 @@ export default function DataTablePreview({ data, maxRows = 100 }: DataTablePrevi
       columns.map(col => {
         const val = row?.[col];
         if (val === null || val === undefined) return "";
-        const str = String(val);
+        const str = typeof val === 'object' ? JSON.stringify(val) : String(val);
         return str.includes(",") || str.includes('"') || str.includes("\n") 
           ? `"${str.replace(/"/g, '""')}"` 
           : str;
