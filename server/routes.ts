@@ -252,7 +252,7 @@ export async function registerRoutes(
     }
   });
 
-  // Query execution via Python subprocess
+  // Query execution via Python subprocess using QueryEngine.execute_query
   app.post("/api/queries/:id/run", async (req, res) => {
     try {
       const id = req.params.id;
@@ -262,18 +262,24 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Query not found" });
       }
 
-      // Execute query via Python subprocess
-      const pythonScript = path.join(process.cwd(), "python_src", "run_query.py");
+      // Get the connector by sourceId (query.connectorId is actually the source_id)
+      const connector = await storage.getConnectorBySourceId(query.connectorId);
+      if (!connector) {
+        return res.status(404).json({ error: "Connector not found for query" });
+      }
+
+      // Merge query parameters with any overrides
       const useCache = req.body?.useCache !== false;
-      const parameterOverrides = req.body?.parameterOverrides;
+      const parameterOverrides = req.body?.parameterOverrides || {};
       const saveToResults = req.body?.saveToResults !== false;
       
-      const args = [pythonScript, query.queryId];
+      const mergedParameters = { ...query.parameters, ...parameterOverrides };
+
+      // Execute query via Python QueryEngine.execute_query (same as execute_query.py)
+      const pythonScript = path.join(process.cwd(), "python_src", "execute_query.py");
+      const args = [pythonScript, connector.sourceId, JSON.stringify(mergedParameters)];
       if (!useCache) {
         args.push("--no-cache");
-      }
-      if (parameterOverrides) {
-        args.push(JSON.stringify(parameterOverrides));
       }
 
       const pythonProcess = spawn("python3", args, {
