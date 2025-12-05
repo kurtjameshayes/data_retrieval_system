@@ -1,7 +1,6 @@
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChevronLeft, ChevronRight, Search, Download } from "lucide-react";
 
 interface DataTablePreviewProps {
@@ -119,13 +118,13 @@ export default function DataTablePreview({ data, maxRows = 100 }: DataTablePrevi
         </div>
       </div>
 
-      <ScrollArea className="border rounded-lg">
-        <div className="max-h-[400px] overflow-auto">
-          <table className="w-full text-xs">
-            <thead className="bg-muted/50 sticky top-0">
+      <div className="border rounded-lg overflow-hidden">
+        <div className="max-h-[400px] overflow-y-auto overflow-x-auto" style={{ scrollbarGutter: 'stable' }}>
+          <table className="w-full text-xs min-w-max">
+            <thead className="bg-muted/50 sticky top-0 z-10">
               <tr>
                 {columns.map((col) => (
-                  <th key={col} className="px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap border-b">
+                  <th key={col} className="px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap border-b bg-muted/50">
                     {col}
                   </th>
                 ))}
@@ -145,7 +144,7 @@ export default function DataTablePreview({ data, maxRows = 100 }: DataTablePrevi
                       displayValue = String(val);
                     }
                     return (
-                      <td key={col} className="px-3 py-2 border-b border-border/50 max-w-[200px] truncate" title={displayValue}>
+                      <td key={col} className="px-3 py-2 border-b border-border/50 whitespace-nowrap" title={displayValue}>
                         {val !== null && val !== undefined ? displayValue : <span className="text-muted-foreground/50">null</span>}
                       </td>
                     );
@@ -155,7 +154,7 @@ export default function DataTablePreview({ data, maxRows = 100 }: DataTablePrevi
             </tbody>
           </table>
         </div>
-      </ScrollArea>
+      </div>
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
