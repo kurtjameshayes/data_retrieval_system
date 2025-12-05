@@ -108,24 +108,15 @@ def persist_analysis_plan(
     how: str,
     analysis_plan: Dict[str, Any],
 ) -> str:
-    plan_payload = {
-        "plan_id": plan_id,
-        "plan_name": plan_name or plan_id,
-        "description": description,
-        "queries": [{"query_id": query_id} for query_id in query_ids],
-        "join_on": list(join_on),
-        "how": how,
-        "analysis_plan": analysis_plan,
-    }
-
-    existing = plan_manager.get_plan(plan_id)
-    if existing:
-        update_payload = {k: v for k, v in plan_payload.items() if k != "plan_id"}
-        plan_manager.update_plan(plan_id, update_payload)
-        return "updated"
-
-    plan_manager.create_plan(plan_payload)
-    return "created"
+    return plan_manager.add_analyzer_plan(
+        plan_id=plan_id,
+        plan_name=plan_name,
+        description=description,
+        query_ids=query_ids,
+        join_on=join_on,
+        how=how,
+        analysis_plan=analysis_plan,
+    )
 
 
 def _extract_plan_target(

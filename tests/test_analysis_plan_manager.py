@@ -130,3 +130,59 @@ def test_execute_plan_builds_query_specs_with_overrides():
     call_kwargs = dummy_engine.analyze_calls[0]
     assert call_kwargs["join_on"] == ["state", "year"]
     assert call_kwargs["analysis_plan"] == {"basic_statistics": True}
+
+
+def test_add_analyzer_plan_creates_new_plan_when_missing():
+    stub_model = StubAnalysisPlanModel()
+    manager = AnalysisPlanManager(plan_model=stub_model, query_engine=DummyQueryEngine({}))
+
+    action = manager.add_analyzer_plan(
+        plan_id="zip-analysis",
+        query_ids=["education_all_levels_by_zip", "household_all_types_by_zip"],
+        join_on=["zip code tabulation area"],
+        analysis_plan={"basic_statistics": True},
+    )
+
+    assert action == "created"
+    assert stub_model.plan is not None
+    assert stub_model.plan["plan_name"] == "zip-analysis"
+    assert len(stub_model.plan["queries"]) == 2
+    assert stub_model.plan["join_on"] == ["zip code tabulation area"]
+
+
+def test_add_analyzer_plan_updates_existing_plan():
+    existing = {
+        "plan_id": "zip-analysis",
+        "plan_name": "Old Name",
+        "queries": [
+            {"query_id": "education_all_levels_by_zip"},
+            {"query_id": "household_all_types_by_zip"},
+        ],
+        "join_on": ["zip code tabulation area"],
+        "analysis_plan": {"basic_statistics": True},
+        "how": "inner",
+    }
+    stub_model = StubAnalysisPlanModel(existing)
+    manager = AnalysisPlanManager(plan_model=stub_model, query_engine=DummyQueryEngine({}))
+
+    action = manager.add_analyzer_plan(
+        plan_id="zip-analysis",
+        plan_name="Updated Name",
+        description="New description",
+        queries=[
+            {"query_id": "education_all_levels_by_zip", "alias": "education"},
+            {"query_id": "household_all_types_by_zip", "alias": "households"},
+        ],
+        join_on=["zip code tabulation area"],
+        analysis_plan={"basic_statistics": True, "exploratory": True},
+        how="left",
+        tags=["example"],
+    )
+
+    assert action == "updated"
+    assert stub_model.plan["plan_name"] == "Updated Name"
+    assert stub_model.plan["description"] == "New description"
+    assert stub_model.plan["queries"][0]["alias"] == "education"
+    assert stub_model.plan["how"] == "left"
+    assert stub_model.plan["tags"] == ["example"]
+    assert stub_model.plan["analysis_plan"]["exploratory"] is True
