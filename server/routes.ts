@@ -420,5 +420,257 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================
+  // Python Integration Endpoints
+  // These endpoints use the Python query engine for execution
+  // ============================================================
+
+  // Validate connector via Python ConnectorManager
+  app.post("/api/connectors/:id/validate", async (req, res) => {
+    try {
+      const connector = await storage.getConnector(req.params.id);
+      if (!connector) {
+        return res.status(404).json({ error: "Connector not found" });
+      }
+
+      const pythonScript = path.join(process.cwd(), "python_src", "validate_connector.py");
+      const pythonProcess = spawn("python3", [pythonScript, connector.sourceId], {
+        env: { ...process.env },
+        cwd: process.cwd(),
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      pythonProcess.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      pythonProcess.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      pythonProcess.on("close", (code) => {
+        console.log(`Python validate_connector exited with code ${code}`);
+        if (stderr) {
+          console.log("Python stderr:", stderr);
+        }
+
+        try {
+          const result = stdout.trim() ? JSON.parse(stdout.trim()) : {
+            success: false,
+            error: stderr || "No output from Python script",
+          };
+          res.json({ connector, pythonResult: result });
+        } catch (parseError) {
+          console.error("Failed to parse Python output:", parseError);
+          res.status(500).json({
+            error: "Failed to parse validation result",
+            connector,
+            raw: stdout.substring(0, 500),
+          });
+        }
+      });
+
+      pythonProcess.on("error", (error) => {
+        console.error("Failed to spawn Python process:", error);
+        res.status(500).json({ error: "Failed to execute Python script", connector });
+      });
+
+    } catch (error) {
+      console.error("Error validating connector:", error);
+      res.status(500).json({ error: "Failed to validate connector" });
+    }
+  });
+
+  // Execute ad-hoc query via Python QueryEngine
+  app.post("/api/execute", async (req, res) => {
+    try {
+      const { sourceId, parameters, useCache = true } = req.body;
+
+      if (!sourceId) {
+        return res.status(400).json({ error: "sourceId is required" });
+      }
+
+      if (!parameters || typeof parameters !== "object") {
+        return res.status(400).json({ error: "parameters must be an object" });
+      }
+
+      const pythonScript = path.join(process.cwd(), "python_src", "execute_query.py");
+      const args = [pythonScript, sourceId, JSON.stringify(parameters)];
+      if (!useCache) {
+        args.push("--no-cache");
+      }
+
+      const pythonProcess = spawn("python3", args, {
+        env: { ...process.env },
+        cwd: process.cwd(),
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      pythonProcess.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      pythonProcess.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      pythonProcess.on("close", (code) => {
+        console.log(`Python execute_query exited with code ${code}`);
+        if (stderr) {
+          console.log("Python stderr:", stderr);
+        }
+
+        try {
+          const result = stdout.trim() ? JSON.parse(stdout.trim()) : {
+            success: false,
+            error: stderr || "No output from Python script",
+          };
+
+          if (result.success) {
+            res.json(result);
+          } else {
+            res.status(500).json(result);
+          }
+        } catch (parseError) {
+          console.error("Failed to parse Python output:", parseError);
+          res.status(500).json({
+            error: "Failed to parse query result",
+            raw: stdout.substring(0, 500),
+          });
+        }
+      });
+
+      pythonProcess.on("error", (error) => {
+        console.error("Failed to spawn Python process:", error);
+        res.status(500).json({ error: "Failed to execute Python script" });
+      });
+
+    } catch (error) {
+      console.error("Error executing query:", error);
+      res.status(500).json({ error: "Failed to execute query" });
+    }
+  });
+
+  // Analyze query results via Python DataAnalysisEngine
+  app.post("/api/queries/:id/analyze", async (req, res) => {
+    try {
+      const query = await storage.getQuery(req.params.id);
+      if (!query) {
+        return res.status(404).json({ error: "Query not found" });
+      }
+
+      const analysisType = req.body?.type || "basic";
+
+      const pythonScript = path.join(process.cwd(), "python_src", "analyze_data.py");
+      const pythonProcess = spawn("python3", [pythonScript, query.queryId, analysisType], {
+        env: { ...process.env },
+        cwd: process.cwd(),
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      pythonProcess.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      pythonProcess.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      pythonProcess.on("close", (code) => {
+        console.log(`Python analyze_data exited with code ${code}`);
+        if (stderr) {
+          console.log("Python stderr:", stderr);
+        }
+
+        try {
+          const result = stdout.trim() ? JSON.parse(stdout.trim()) : {
+            success: false,
+            error: stderr || "No output from Python script",
+          };
+
+          if (result.success) {
+            res.json({ query, analysis: result });
+          } else {
+            res.status(500).json({ query, error: result.error });
+          }
+        } catch (parseError) {
+          console.error("Failed to parse Python output:", parseError);
+          res.status(500).json({
+            error: "Failed to parse analysis result",
+            query,
+            raw: stdout.substring(0, 500),
+          });
+        }
+      });
+
+      pythonProcess.on("error", (error) => {
+        console.error("Failed to spawn Python process:", error);
+        res.status(500).json({ error: "Failed to execute Python script", query });
+      });
+
+    } catch (error) {
+      console.error("Error analyzing query:", error);
+      res.status(500).json({ error: "Failed to analyze query" });
+    }
+  });
+
+  // Get cache and query statistics via Python
+  app.get("/api/stats", async (req, res) => {
+    try {
+      const pythonScript = path.join(process.cwd(), "python_src", "get_cache_stats.py");
+      const pythonProcess = spawn("python3", [pythonScript], {
+        env: { ...process.env },
+        cwd: process.cwd(),
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      pythonProcess.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      pythonProcess.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      pythonProcess.on("close", (code) => {
+        console.log(`Python get_cache_stats exited with code ${code}`);
+        if (stderr) {
+          console.log("Python stderr:", stderr);
+        }
+
+        try {
+          const result = stdout.trim() ? JSON.parse(stdout.trim()) : {
+            success: false,
+            error: stderr || "No output from Python script",
+          };
+          res.json(result);
+        } catch (parseError) {
+          console.error("Failed to parse Python output:", parseError);
+          res.status(500).json({
+            error: "Failed to parse stats result",
+            raw: stdout.substring(0, 500),
+          });
+        }
+      });
+
+      pythonProcess.on("error", (error) => {
+        console.error("Failed to spawn Python process:", error);
+        res.status(500).json({ error: "Failed to execute Python script" });
+      });
+
+    } catch (error) {
+      console.error("Error fetching stats:", error);
+      res.status(500).json({ error: "Failed to fetch stats" });
+    }
+  });
+
   return httpServer;
 }
