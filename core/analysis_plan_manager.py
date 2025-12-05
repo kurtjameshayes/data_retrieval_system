@@ -7,7 +7,7 @@ delegating to the QueryEngine.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from core.query_engine import QueryEngine
 from models.analysis_plan import AnalysisPlan
@@ -45,6 +45,85 @@ class AnalysisPlanManager:
     def list_plans(self, *, active_only: bool = False) -> List[Dict[str, Any]]:
         """Return available plans."""
         return self.plan_model.get_all(active_only=active_only)
+
+    def add_analyzer_plan(
+        self,
+        *,
+        plan_id: str,
+        plan_name: Optional[str] = None,
+        description: Optional[str] = None,
+        query_ids: Optional[Sequence[str]] = None,
+        queries: Optional[Sequence[Dict[str, Any]]] = None,
+        join_on: Sequence[str],
+        analysis_plan: Dict[str, Any],
+        how: str = "inner",
+        aggregation: Optional[Dict[str, Any]] = None,
+        tags: Optional[Sequence[str]] = None,
+        active: Optional[bool] = None,
+    ) -> str:
+        """
+        Create or update a reusable analyzer plan definition.
+
+        Returns:
+            "created" if a new plan was inserted, otherwise "updated".
+        """
+
+        if not isinstance(analysis_plan, dict) or not analysis_plan:
+            raise ValueError("analysis_plan must be a non-empty dictionary.")
+
+        if queries and query_ids:
+            raise ValueError("Provide either queries or query_ids, not both.")
+
+        normalized_queries: List[Dict[str, Any]] = []
+        source_entries = queries if queries is not None else None
+
+        if source_entries is not None:
+            for entry in source_entries:
+                normalized_queries.append(
+                    {
+                        "query_id": entry["query_id"],
+                        "alias": entry.get("alias"),
+                        "rename_columns": entry.get("rename_columns"),
+                        "parameter_overrides": entry.get("parameter_overrides"),
+                    }
+                )
+        elif query_ids:
+            normalized_queries = [{"query_id": query_id} for query_id in query_ids]
+
+        if len(normalized_queries) < 2:
+            raise ValueError("Analyzer plans must reference at least two queries.")
+
+        if isinstance(join_on, str):
+            join_keys = [join_on]
+        else:
+            join_keys = list(join_on)
+        if not join_keys:
+            raise ValueError("join_on must include at least one column.")
+
+        plan_payload: Dict[str, Any] = {
+            "plan_id": plan_id,
+            "plan_name": plan_name or plan_id,
+            "description": description,
+            "queries": normalized_queries,
+            "join_on": join_keys,
+            "how": how or "inner",
+            "analysis_plan": analysis_plan,
+        }
+        if aggregation is not None:
+            plan_payload["aggregation"] = aggregation
+        if tags is not None:
+            plan_payload["tags"] = list(tags)
+        if active is not None:
+            plan_payload["active"] = active
+
+        existing = self.get_plan(plan_id)
+        if existing:
+            update_payload = {k: v for k, v in plan_payload.items() if k != "plan_id"}
+            self.update_plan(plan_id, update_payload)
+            return "updated"
+
+        self.create_plan(plan_payload)
+        return "created"
 
     # -- Execution helpers ---------------------------------------------------
 
