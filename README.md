@@ -89,6 +89,29 @@ Each overrides JSON object should map `query_id` -> parameter overrides, for exa
 }
 ```
 
+### Run a Single Query from the CLI
+
+Use `run_query.py` to execute any configured connector exactly once and print
+the first 10 rows (all columns) to stdout. Parameters can come from a JSON file,
+an inline JSON string, or individual key/value overrides:
+
+```bash
+# Inline JSON payload
+python run_query.py \
+  --source-id census_api \
+  --params-json '{"dataset":"2020/dec/pl","get":"NAME,P1_001N","for":"state:*"}'
+
+# Mix JSON file with ad-hoc overrides
+python run_query.py \
+  --source-id local_data \
+  --params-file local_query.json \
+  --param limit=5 \
+  --param filters.state=06
+```
+
+Flags such as `--rows`, `--no-cache`, `--show-metadata`, and `--print-json`
+provide additional control over the output and execution.
+
 ## API Endpoints
 
 ### Sources
