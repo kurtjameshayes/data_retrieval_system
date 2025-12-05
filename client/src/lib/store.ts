@@ -83,6 +83,7 @@ export interface Connector {
   notes: string | null;
   maxRetries: number;
   retryDelay: number;
+  dataPath?: string | null;
   createdAt: string;
   updatedAt: string;
 }

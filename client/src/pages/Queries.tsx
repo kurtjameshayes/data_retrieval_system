@@ -1,11 +1,11 @@
-import { useAppStore, api, type Query, useNotificationStore } from "@/lib/store";
+import { useAppStore, api, type Query, type Connector, useNotificationStore } from "@/lib/store";
 import QueryBuilder from "@/components/QueryBuilder";
 import EditQueryDialog from "@/components/EditQueryDialog";
 import DataTablePreview from "@/components/DataTablePreview";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Play, Loader2, Pencil, Table } from "lucide-react";
+import { Play, Loader2, Pencil, Table, AlertCircle } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
@@ -18,18 +18,36 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+function extractDataByPath(data: any, path: string | null | undefined): any[] {
+  if (!path || !data) return [];
+  
+  const parts = path.split('.');
+  let current = data;
+  
+  for (const part of parts) {
+    if (current && typeof current === 'object' && part in current) {
+      current = current[part];
+    } else {
+      return [];
+    }
+  }
+  
+  return Array.isArray(current) ? current : [];
+}
+
 export default function Queries() {
-  const { queries, setQueries } = useAppStore();
+  const { queries, setQueries, connectors, setConnectors } = useAppStore();
   const { addNotification, updateNotification } = useNotificationStore();
   const queryClient = useQueryClient();
   const [runningQueries, setRunningQueries] = useState<Set<string>>(new Set());
   const [notificationIds, setNotificationIds] = useState<Map<string, string>>(new Map());
   const [editQuery, setEditQuery] = useState<Query | null>(null);
-  const [resultDialog, setResultDialog] = useState<{ open: boolean; query: Query | null; result: any; pythonResult?: any }>({
+  const [resultDialog, setResultDialog] = useState<{ open: boolean; query: Query | null; result: any; pythonResult?: any; connector?: Connector | null }>({
     open: false,
     query: null,
     result: null,
     pythonResult: null,
+    connector: null,
   });
 
   const { data: queriesData } = useQuery({
@@ -37,9 +55,18 @@ export default function Queries() {
     queryFn: api.getQueries,
   });
 
+  const { data: connectorsData } = useQuery({
+    queryKey: ['connectors'],
+    queryFn: api.getConnectors,
+  });
+
   useEffect(() => {
     if (queriesData) setQueries(queriesData);
   }, [queriesData, setQueries]);
+
+  useEffect(() => {
+    if (connectorsData) setConnectors(connectorsData);
+  }, [connectorsData, setConnectors]);
 
   const runMutation = useMutation({
     mutationFn: api.runQuery,
@@ -84,7 +111,8 @@ export default function Queries() {
       }
       
       const pythonResult = (data as any).pythonResult;
-      setResultDialog({ open: true, query: data.query, result: data.result, pythonResult });
+      const queryConnector = connectors.find(c => c.sourceId === data.query.connectorId);
+      setResultDialog({ open: true, query: data.query, result: data.result, pythonResult, connector: queryConnector });
       queryClient.invalidateQueries({ queryKey: ['queries'] });
     },
     onError: (error, id) => {
@@ -181,10 +209,10 @@ export default function Queries() {
       </div>
 
       <Dialog open={resultDialog.open} onOpenChange={(open) => setResultDialog(prev => ({ ...prev, open }))}>
-        <DialogContent className="max-w-5xl max-h-[85vh]">
+        <DialogContent className="max-w-5xl max-h-[85vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle>Query Result: {resultDialog.query?.queryName}</DialogTitle>
-            <DialogDescription className="flex items-center gap-4">
+            <DialogDescription className="flex items-center gap-4 flex-wrap">
               <span>Executed at {resultDialog.result?.executedAt ? new Date(resultDialog.result.executedAt).toLocaleString() : 'N/A'}</span>
               {resultDialog.pythonResult?.record_count && (
                 <Badge variant="secondary">{resultDialog.pythonResult.record_count} records</Badge>
@@ -192,10 +220,28 @@ export default function Queries() {
               {resultDialog.pythonResult?.source && (
                 <Badge variant="outline">{resultDialog.pythonResult.source}</Badge>
               )}
+              {resultDialog.connector?.dataPath && (
+                <Badge variant="outline" className="font-mono text-xs">data: {resultDialog.connector.dataPath}</Badge>
+              )}
             </DialogDescription>
           </DialogHeader>
+
+          {resultDialog.pythonResult?.error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-red-500">Query Failed</p>
+                <p className="text-sm text-red-400 mt-1 break-words">{resultDialog.pythonResult.error}</p>
+                {resultDialog.pythonResult.traceback && (
+                  <pre className="mt-2 text-xs text-red-300 bg-red-500/10 p-2 rounded overflow-x-auto max-h-32">
+                    {resultDialog.pythonResult.traceback}
+                  </pre>
+                )}
+              </div>
+            </div>
+          )}
           
-          <Tabs defaultValue="table" className="mt-2">
+          <Tabs defaultValue="table" className="mt-2 flex-1 flex flex-col min-h-0">
             <TabsList>
               <TabsTrigger value="table" data-testid="result-tab-table">
                 <Table className="h-3 w-3 mr-2" />
@@ -206,19 +252,26 @@ export default function Queries() {
               </TabsTrigger>
             </TabsList>
             
-            <TabsContent value="table" className="mt-4">
-              {resultDialog.pythonResult?.data ? (
-                <DataTablePreview data={resultDialog.pythonResult.data} maxRows={200} />
-              ) : (
-                <div className="text-center text-muted-foreground py-8">
-                  No tabular data available
-                </div>
-              )}
+            <TabsContent value="table" className="mt-4 flex-1 min-h-0">
+              {(() => {
+                const dataPath = resultDialog.connector?.dataPath;
+                const rawData = resultDialog.pythonResult?.data;
+                const tableData = dataPath && rawData ? extractDataByPath(rawData, dataPath) : rawData;
+                
+                if (tableData && (Array.isArray(tableData) ? tableData.length > 0 : true)) {
+                  return <DataTablePreview data={tableData} maxRows={200} />;
+                }
+                return (
+                  <div className="text-center text-muted-foreground py-8">
+                    No tabular data available
+                  </div>
+                );
+              })()}
             </TabsContent>
             
-            <TabsContent value="json" className="mt-4">
-              <ScrollArea className="max-h-[50vh]">
-                <pre className="p-4 bg-muted rounded-lg text-xs font-mono overflow-x-auto">
+            <TabsContent value="json" className="mt-4 flex-1 min-h-0 overflow-hidden">
+              <ScrollArea className="h-full max-h-[50vh]">
+                <pre className="p-4 bg-muted rounded-lg text-xs font-mono whitespace-pre-wrap break-words">
                   {JSON.stringify(resultDialog.pythonResult || resultDialog.result?.result, null, 2)}
                 </pre>
               </ScrollArea>

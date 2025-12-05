@@ -134,11 +134,22 @@ export default function DataTablePreview({ data, maxRows = 100 }: DataTablePrevi
             <tbody>
               {paginatedData.map((row, i) => (
                 <tr key={i} className="hover:bg-muted/30 transition-colors" data-testid={`table-row-${i}`}>
-                  {columns.map((col) => (
-                    <td key={col} className="px-3 py-2 border-b border-border/50 max-w-[200px] truncate" title={String(row?.[col] ?? "")}>
-                      {row?.[col] !== null && row?.[col] !== undefined ? String(row[col]) : <span className="text-muted-foreground/50">null</span>}
-                    </td>
-                  ))}
+                  {columns.map((col) => {
+                    const val = row?.[col];
+                    let displayValue: string;
+                    if (val === null || val === undefined) {
+                      displayValue = "";
+                    } else if (typeof val === 'object') {
+                      displayValue = JSON.stringify(val);
+                    } else {
+                      displayValue = String(val);
+                    }
+                    return (
+                      <td key={col} className="px-3 py-2 border-b border-border/50 max-w-[200px] truncate" title={displayValue}>
+                        {val !== null && val !== undefined ? displayValue : <span className="text-muted-foreground/50">null</span>}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>

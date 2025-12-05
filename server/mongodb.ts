@@ -26,6 +26,7 @@ const connectorSchema = new mongoose.Schema({
   notes: { type: String, default: null },
   max_retries: { type: Number, default: 3 },
   retry_delay: { type: Number, default: 1 },
+  data_path: { type: String, default: null },
   created_at: { type: Date, default: Date.now },
   updated_at: { type: Date, default: Date.now },
 });

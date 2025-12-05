@@ -247,6 +247,21 @@ export default function EditConnectorDialog({ connector, open, onOpenChange }: E
                 data-testid="input-notes"
               />
             </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="dataPath">Data Path</Label>
+              <Input
+                id="dataPath"
+                value={formData.dataPath || ""}
+                onChange={(e) => handleFormChange("dataPath", e.target.value || null)}
+                placeholder="e.g., data (path to primary data array in response)"
+                className="font-mono text-sm"
+                data-testid="input-dataPath"
+              />
+              <p className="text-xs text-muted-foreground">
+                JSON path to the primary data array in query results. Use dot notation for nested paths (e.g., "response.data").
+              </p>
+            </div>
           </TabsContent>
 
           <TabsContent value="json" className="mt-4">

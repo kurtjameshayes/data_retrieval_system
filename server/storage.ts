@@ -14,6 +14,7 @@ export interface Connector {
   notes: string | null;
   maxRetries: number;
   retryDelay: number;
+  dataPath?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -53,6 +54,7 @@ export interface InsertConnector {
   notes?: string | null;
   maxRetries?: number;
   retryDelay?: number;
+  dataPath?: string | null;
 }
 
 export interface InsertQuery {
@@ -108,6 +110,7 @@ function transformConnector(doc: any): Connector {
     notes: doc.notes || null,
     maxRetries: doc.max_retries || 3,
     retryDelay: doc.retry_delay || 1,
+    dataPath: doc.data_path || null,
     createdAt: doc.created_at || new Date(),
     updatedAt: doc.updated_at || new Date(),
   };
@@ -169,6 +172,7 @@ export class MongoStorage implements IStorage {
       notes: connector.notes,
       max_retries: connector.maxRetries || 3,
       retry_delay: connector.retryDelay || 1,
+      data_path: connector.dataPath,
       active: true,
       created_at: new Date(),
       updated_at: new Date(),
@@ -189,6 +193,7 @@ export class MongoStorage implements IStorage {
     if (updates.notes !== undefined) updateData.notes = updates.notes;
     if (updates.maxRetries !== undefined) updateData.max_retries = updates.maxRetries;
     if (updates.retryDelay !== undefined) updateData.retry_delay = updates.retryDelay;
+    if (updates.dataPath !== undefined) updateData.data_path = updates.dataPath;
 
     const doc = await ConnectorModel.findByIdAndUpdate(id, updateData, { new: true });
     if (!doc) throw new Error('Connector not found');
