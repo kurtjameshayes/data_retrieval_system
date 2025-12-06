@@ -174,9 +174,14 @@ class AnalysisPlan:
             update_data['updated_at'] = datetime.utcnow()
             update_data.pop('plan_id', None)
             
+            update_ops = {"$set": update_data}
+            
+            if 'analysis_plan' in update_data:
+                update_ops["$unset"] = {"analysis_config": ""}
+            
             result = self.collection.update_one(
                 {"plan_id": plan_id},
-                {"$set": update_data}
+                update_ops
             )
             
             if result.modified_count > 0:
