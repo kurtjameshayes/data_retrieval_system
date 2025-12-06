@@ -596,6 +596,7 @@ export default function AnalysisPlans() {
               <Tabs defaultValue="summary" className="w-full">
                 <TabsList>
                   <TabsTrigger value="summary">Summary</TabsTrigger>
+                  <TabsTrigger value="data">Data Preview</TabsTrigger>
                   <TabsTrigger value="statistics">Statistics</TabsTrigger>
                   <TabsTrigger value="raw">Raw JSON</TabsTrigger>
                 </TabsList>
@@ -640,6 +641,57 @@ export default function AnalysisPlans() {
                           </Badge>
                         ))}
                       </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+                
+                <TabsContent value="data" className="mt-4">
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium">
+                        First {executionResult.data_sample?.length || 0} rows of {executionResult.record_count} total
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <div className="overflow-auto max-h-[400px] border rounded-md">
+                        <table className="w-full text-xs">
+                          <thead className="bg-muted sticky top-0">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-medium border-b">#</th>
+                              {executionResult.columns?.slice(0, 10).map((col: string, i: number) => (
+                                <th key={i} className="px-3 py-2 text-left font-medium border-b whitespace-nowrap max-w-[200px] truncate" title={col}>
+                                  {col.length > 30 ? col.substring(0, 30) + '...' : col}
+                                </th>
+                              ))}
+                              {(executionResult.columns?.length || 0) > 10 && (
+                                <th className="px-3 py-2 text-left font-medium border-b text-muted-foreground">
+                                  +{executionResult.columns.length - 10} more
+                                </th>
+                              )}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {executionResult.data_sample?.map((row: Record<string, any>, rowIndex: number) => (
+                              <tr key={rowIndex} className="border-b hover:bg-muted/50">
+                                <td className="px-3 py-2 text-muted-foreground">{rowIndex + 1}</td>
+                                {executionResult.columns?.slice(0, 10).map((col: string, colIndex: number) => (
+                                  <td key={colIndex} className="px-3 py-2 whitespace-nowrap max-w-[200px] truncate" title={String(row[col] ?? '')}>
+                                    {String(row[col] ?? '')}
+                                  </td>
+                                ))}
+                                {(executionResult.columns?.length || 0) > 10 && (
+                                  <td className="px-3 py-2 text-muted-foreground">...</td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {(executionResult.columns?.length || 0) > 10 && (
+                        <p className="text-xs text-muted-foreground mt-2 px-4 pb-2">
+                          Showing first 10 of {executionResult.columns?.length} columns. View Raw JSON for complete data.
+                        </p>
+                      )}
                     </CardContent>
                   </Card>
                 </TabsContent>

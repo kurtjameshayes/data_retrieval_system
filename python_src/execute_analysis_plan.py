@@ -201,7 +201,7 @@ def main():
                 "record_count": len(df),
                 "columns": list(df.columns),
                 "analysis": analysis_results,
-                "data_sample": df.head(10).to_dict(orient='records')
+                "data_sample": df.head(20).to_dict(orient='records')
             }
             
         elif action == "get_columns":
