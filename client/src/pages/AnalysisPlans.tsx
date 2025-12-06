@@ -264,7 +264,10 @@ export default function AnalysisPlans() {
   };
 
   const handleCreatePlan = () => {
-    if (!validateForm()) return;
+    if (!validateForm()) {
+      addNotification({ type: 'error', title: 'Validation Error', message: 'Please fix the errors in the form', duration: 3000 });
+      return;
+    }
     
     const plan: Omit<AnalysisPlan, 'created_at' | 'updated_at' | 'last_run_at' | 'last_run_status'> = {
       plan_id: formState.plan_id.trim().toLowerCase().replace(/\s+/g, '_'),
@@ -284,7 +287,11 @@ export default function AnalysisPlans() {
   };
 
   const handleUpdatePlan = () => {
-    if (!selectedPlan || !validateForm()) return;
+    if (!selectedPlan) return;
+    if (!validateForm()) {
+      addNotification({ type: 'error', title: 'Validation Error', message: 'Please fix the errors in the form', duration: 3000 });
+      return;
+    }
     
     const updates: Partial<AnalysisPlan> = {
       plan_name: formState.plan_name.trim(),
