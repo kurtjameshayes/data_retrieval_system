@@ -124,11 +124,14 @@ class CensusConnector(BaseConnector):
         """
         Fetch variable labels from Census API and cache them.
         
+        The full column header format is: "{concept}: {label}"
+        where concept is the variable group name and label is the specific variable description.
+        
         Args:
             dataset: Dataset identifier (e.g., "2022/acs/acs5")
             
         Returns:
-            Dict mapping variable codes to their human-readable labels
+            Dict mapping variable codes to their full human-readable labels (concept: label)
         """
         if dataset in CensusConnector._variable_label_cache:
             logger.info(f"Using cached variable labels for {dataset}")
@@ -147,7 +150,12 @@ class CensusConnector(BaseConnector):
                 for var_code, var_info in variables.items():
                     if isinstance(var_info, dict):
                         label = var_info.get("label", var_code)
-                        label_map[var_code] = label
+                        concept = var_info.get("concept", "")
+                        if concept:
+                            full_label = f"{concept}: {label}"
+                        else:
+                            full_label = label
+                        label_map[var_code] = full_label
                 
                 CensusConnector._variable_label_cache[dataset] = label_map
                 logger.info(f"Cached {len(label_map)} variable labels for {dataset}")
