@@ -114,7 +114,17 @@ def _print_summary(
     print("Plan metadata:")
     print(f"  Name: {plan_meta.get('plan_name') or plan_meta.get('plan_id')}")
     print(f"  Description: {plan_meta.get('description') or '-'}")
-    print(f"  Join keys: {', '.join(plan_meta.get('join_on', []))}")
+    join_details = plan_meta.get("join_columns") or []
+    if join_details:
+        print("  Join columns per query:")
+        for entry in join_details:
+            label = entry.get("alias") or entry.get("query_id") or "-"
+            columns = ", ".join(entry.get("columns") or [])
+            print(f"    - {label}: {columns}")
+    else:
+        legacy_keys = plan_meta.get("join_on") or []
+        if legacy_keys:
+            print(f"  Join keys: {', '.join(legacy_keys)}")
     print(f"  Join type: {plan_meta.get('how', 'inner')}")
 
     print(f"\nResolved query specs ({len(query_specs)}):")

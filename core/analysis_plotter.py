@@ -27,7 +27,7 @@ class AnalysisPlotter:
     def plot(
         self,
         dataframe: pd.DataFrame,
-        join_on: Sequence[str],
+        label_columns: Sequence[str],
         target_column: str,
         analysis_payload: Dict[str, Any],
         feature_column: Optional[str] = None,
@@ -65,7 +65,7 @@ class AnalysisPlotter:
             )
             return False
 
-        join_columns = [col for col in join_on if col in plot_df.columns]
+        join_columns = [col for col in label_columns if col in plot_df.columns]
         if axis_label_column:
             sort_key = self._prepare_sort_key_column(plot_df, axis_label_column, "axis")
             sort_cols = [sort_key, "_plot_actual"]

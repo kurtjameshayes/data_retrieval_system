@@ -16,7 +16,7 @@ except ImportError:  # Python <3.11
     from datetime import timezone as _timezone
 
     UTC = _timezone.utc
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import pandas as pd
 
@@ -73,7 +73,7 @@ class AnalysisPlanManager:
         description: Optional[str] = None,
         query_ids: Optional[Sequence[str]] = None,
         queries: Optional[Sequence[Dict[str, Any]]] = None,
-        join_on: Sequence[str],
+        query_join_columns: Optional[Sequence[Union[str, Sequence[str]]]] = None,
         analysis_plan: Dict[str, Any],
         how: str = "inner",
         aggregation: Optional[Dict[str, Any]] = None,
@@ -98,33 +98,44 @@ class AnalysisPlanManager:
 
         if source_entries is not None:
             for entry in source_entries:
+                join_columns = self._normalize_join_columns(
+                    entry.get("join_columns") or entry.get("join_column")
+                )
+                if not join_columns:
+                    raise ValueError(
+                        f"Query '{entry.get('query_id')}' must define join_column."
+                    )
                 normalized_queries.append(
                     {
                         "query_id": entry["query_id"],
                         "alias": entry.get("alias"),
                         "rename_columns": entry.get("rename_columns"),
                         "parameter_overrides": entry.get("parameter_overrides"),
+                        "join_column": self._format_join_column_for_storage(join_columns),
                     }
                 )
         elif query_ids:
+            if not query_join_columns or len(query_join_columns) != len(query_ids):
+                raise ValueError(
+                    "query_join_columns must be provided for each query_id when queries are omitted."
+                )
             normalized_queries = [{"query_id": query_id} for query_id in query_ids]
+            for idx, entry in enumerate(normalized_queries):
+                join_columns = self._normalize_join_columns(query_join_columns[idx])
+                if not join_columns:
+                    raise ValueError(
+                        f"Join column configuration missing for query '{entry['query_id']}'."
+                    )
+                entry["join_column"] = self._format_join_column_for_storage(join_columns)
 
         if len(normalized_queries) < 2:
             raise ValueError("Analyzer plans must reference at least two queries.")
-
-        if isinstance(join_on, str):
-            join_keys = [join_on]
-        else:
-            join_keys = list(join_on)
-        if not join_keys:
-            raise ValueError("join_on must include at least one column.")
 
         plan_payload: Dict[str, Any] = {
             "plan_id": plan_id,
             "plan_name": plan_name or plan_id,
             "description": description,
             "queries": normalized_queries,
-            "join_on": join_keys,
             "how": how or "inner",
             "analysis_plan": analysis_plan,
         }
@@ -178,7 +189,6 @@ class AnalysisPlanManager:
 
         analysis_output = self.query_engine.analyze_queries(
             queries=query_specs,
-            join_on=plan["join_on"],
             how=plan.get("how", "inner"),
             analysis_plan=plan["analysis_plan"],
             aggregation=plan.get("aggregation"),
@@ -197,7 +207,7 @@ class AnalysisPlanManager:
                 "plan_id": plan["plan_id"],
                 "plan_name": plan.get("plan_name"),
                 "description": plan.get("description"),
-                "join_on": plan["join_on"],
+                "join_columns": self._collect_plan_join_columns(plan),
                 "how": plan.get("how", "inner"),
                 "queries": plan.get("queries", []),
                 "analysis_plan": plan.get("analysis_plan"),
@@ -245,6 +255,8 @@ class AnalysisPlanManager:
                 query_cfg.get("rename_columns"),
             )
 
+            join_columns = self._extract_join_columns(query_cfg)
+
             spec = {
                 "source_id": connector_id,
                 "parameters": parameters,
@@ -252,6 +264,7 @@ class AnalysisPlanManager:
             }
             if rename_columns:
                 spec["rename_columns"] = rename_columns
+            spec["join_columns"] = join_columns
 
             specs.append(spec)
 
@@ -349,6 +362,62 @@ class AnalysisPlanManager:
         if isinstance(override_map, dict):
             merged.update(override_map)
         return merged or None
+
+    @staticmethod
+    def _normalize_join_columns(value: Optional[Any]) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            cleaned = value.strip()
+            return [cleaned] if cleaned else []
+        if isinstance(value, (list, tuple)):
+            normalized: List[str] = []
+            for entry in value:
+                if entry is None:
+                    continue
+                if isinstance(entry, str):
+                    cleaned = entry.strip()
+                    if cleaned:
+                        normalized.append(cleaned)
+                else:
+                    normalized.append(str(entry))
+            return normalized
+        return []
+
+    @staticmethod
+    def _format_join_column_for_storage(columns: List[str]) -> Union[str, List[str]]:
+        if not columns:
+            raise ValueError("join_column requires at least one column name.")
+        return columns[0] if len(columns) == 1 else columns
+
+    def _extract_join_columns(self, query_cfg: Dict[str, Any]) -> List[str]:
+        join_value = query_cfg.get("join_columns")
+        if join_value is None:
+            join_value = query_cfg.get("join_column")
+        join_columns = self._normalize_join_columns(join_value)
+        if not join_columns:
+            query_id = query_cfg.get("query_id", "<unknown>")
+            raise ValueError(
+                f"Query '{query_id}' in analysis plan is missing join_column configuration."
+            )
+        return join_columns
+
+    def _collect_plan_join_columns(self, plan: Dict[str, Any]) -> List[Dict[str, Any]]:
+        join_details: List[Dict[str, Any]] = []
+        for entry in plan.get("queries", []) or []:
+            join_columns = self._normalize_join_columns(
+                entry.get("join_columns") or entry.get("join_column")
+            )
+            if not join_columns:
+                continue
+            join_details.append(
+                {
+                    "query_id": entry.get("query_id"),
+                    "alias": entry.get("alias"),
+                    "columns": join_columns,
+                }
+            )
+        return join_details
 
     @staticmethod
     def _format_cached_columns(doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -461,7 +530,7 @@ class AnalysisPlanManager:
         if records is None:
             return None
 
-        join_on = plan.get("join_on") or []
+        join_details = self._collect_plan_join_columns(plan)
         query_entries = plan.get("queries", []) or []
         query_ids = [
             entry.get("query_id") for entry in query_entries if entry.get("query_id")
@@ -476,7 +545,7 @@ class AnalysisPlanManager:
             "description": plan.get("description"),
             "query_ids": query_ids,
             "query_aliases": query_aliases,
-            "join_on": list(join_on),
+            "join_columns": join_details,
             "how": plan.get("how", "inner"),
             "aggregation": plan.get("aggregation"),
             "analysis_plan": plan.get("analysis_plan"),

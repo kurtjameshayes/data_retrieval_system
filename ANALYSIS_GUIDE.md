@@ -30,7 +30,8 @@ dataframe = query_engine.execute_queries_to_dataframe(
                 "for": "state:*"
             },
             "alias": "population",
-            "rename_columns": {"B01003_001E": "population"}
+            "rename_columns": {"B01003_001E": "population"},
+            "join_columns": ["state"],
         },
         {
             "source_id": "usda_quickstats",
@@ -40,10 +41,10 @@ dataframe = query_engine.execute_queries_to_dataframe(
                 "format": "JSON"
             },
             "alias": "agriculture",
-            "rename_columns": {"value": "corn_value"}
+            "rename_columns": {"value": "corn_value"},
+            "join_columns": ["state"],
         }
     ],
-    join_on=["state"],
     how="inner",
     aggregation={
         "group_by": ["state", "NAME"],
@@ -55,7 +56,7 @@ dataframe = query_engine.execute_queries_to_dataframe(
 ```
 
 - `queries` defines the connector source IDs and their parameters.
-- `join_on` accepts a column or list of columns shared across datasets.
+- Each query's `join_columns` entry lists the column(s) from that dataset used for joins, so column names can differ across sources.
 - Optional `aggregation` applies group-by metrics after the join.
 
 ## Step 2: Describe the Analysis Plan
@@ -114,7 +115,6 @@ analysis_plan = {
 ```python
 result = query_engine.analyze_queries(
     queries=[...],           # same structure as the DataFrame step
-    join_on=["state"],
     analysis_plan=analysis_plan,
     how="inner"
 )

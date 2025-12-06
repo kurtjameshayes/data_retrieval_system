@@ -1,4 +1,4 @@
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Sequence, Union
 import logging
 import re
 
@@ -331,13 +331,12 @@ class QueryEngine:
     def execute_queries_to_dataframe(
         self,
         queries: List[Dict[str, Any]],
-        join_on: Union[List[str], str],
         how: str = "inner",
         aggregation: Optional[Dict[str, Any]] = None,
         use_cache: bool = None,
     ) -> pd.DataFrame:
         """
-        Execute two or more queries, join their results, and return a DataFrame.
+        Execute two or more queries, align their join columns, and return a DataFrame.
 
         Args:
             queries: List of query specifications with keys:
@@ -345,7 +344,7 @@ class QueryEngine:
                 - parameters (dict): optional
                 - alias (str): optional label used in suffixes
                 - rename_columns (dict): optional column rename map applied before joins
-            join_on: Column name or list of column names to join on
+                - join_columns (list[str] | str): required columns used to join results
             how: pandas merge strategy (inner, left, right, outer)
             aggregation: Optional aggregation definition:
                 {
@@ -362,10 +361,6 @@ class QueryEngine:
         if not queries or len(queries) < 2:
             raise ValueError("At least two queries are required to build a DataFrame")
 
-        join_keys = [join_on] if isinstance(join_on, str) else join_on
-        if not join_keys:
-            raise ValueError("join_on parameter is required")
-
         dataframes = []
         for spec in queries:
             source_id = spec.get("source_id")
@@ -375,6 +370,7 @@ class QueryEngine:
             parameters = spec.get("parameters", {})
             alias = spec.get("alias", source_id)
             rename_map = spec.get("rename_columns")
+            join_columns = self._resolve_spec_join_columns(spec)
 
             result = self.execute_query(source_id, parameters, use_cache)
             if not result.get("success"):
@@ -389,23 +385,43 @@ class QueryEngine:
             if rename_map:
                 df = df.rename(columns=rename_map)
 
-            missing_keys = [key for key in join_keys if key not in df.columns]
+            missing_keys = [key for key in join_columns if key not in df.columns]
             if missing_keys:
                 raise ValueError(
                     f"Join keys {missing_keys} not present in query result for {source_id}"
                 )
 
-            dataframes.append({"alias": alias, "df": df})
+            dataframes.append({"alias": alias, "df": df, "join_columns": join_columns})
 
-        joined_df = dataframes[0]["df"]
+        base_entry = dataframes[0]
+        base_join_columns = base_entry["join_columns"]
+        if not base_join_columns:
+            raise ValueError(
+                "At least one join_column must be specified for the first query."
+            )
+
+        joined_df = base_entry["df"]
         for entry in dataframes[1:]:
+            if len(entry["join_columns"]) != len(base_join_columns):
+                raise ValueError(
+                    "Join column count mismatch between the first query "
+                    f"and '{entry['alias']}'."
+                )
+
             joined_df = pd.merge(
                 joined_df,
                 entry["df"],
-                on=join_keys,
+                left_on=base_join_columns,
+                right_on=entry["join_columns"],
                 how=how,
                 suffixes=("", f"_{entry['alias']}"),
             )
+
+            extra_columns = [
+                column for column in entry["join_columns"] if column not in base_join_columns
+            ]
+            if extra_columns:
+                joined_df = joined_df.drop(columns=extra_columns, errors="ignore")
 
         if aggregation:
             joined_df = self._apply_aggregation(joined_df, aggregation)
@@ -415,7 +431,6 @@ class QueryEngine:
     def analyze_queries(
         self,
         queries: List[Dict[str, Any]],
-        join_on: Union[List[str], str],
         analysis_plan: Dict[str, Any],
         how: str = "inner",
         aggregation: Optional[Dict[str, Any]] = None,
@@ -427,7 +442,6 @@ class QueryEngine:
         """
         dataframe = self.execute_queries_to_dataframe(
             queries=queries,
-            join_on=join_on,
             how=how,
             aggregation=aggregation,
             use_cache=use_cache,
@@ -438,6 +452,46 @@ class QueryEngine:
             "dataframe": dataframe,
             "analysis": analysis_results,
         }
+
+    @staticmethod
+    def _resolve_spec_join_columns(spec: Dict[str, Any]) -> List[str]:
+        join_value = spec.get("join_columns")
+        if join_value is None:
+            join_value = spec.get("join_column")
+
+        columns = QueryEngine._coerce_join_columns(join_value)
+        if not columns:
+            alias = spec.get("alias") or spec.get("source_id") or "query"
+            raise ValueError(
+                f"Query spec '{alias}' must define at least one join_column."
+            )
+        return columns
+
+    @staticmethod
+    def _coerce_join_columns(
+        join_value: Optional[Union[str, Sequence[str]]]
+    ) -> List[str]:
+        if join_value is None:
+            return []
+
+        if isinstance(join_value, str):
+            cleaned = join_value.strip()
+            return [cleaned] if cleaned else []
+
+        if isinstance(join_value, Sequence) and not isinstance(join_value, (str, bytes)):
+            columns: List[str] = []
+            for column in join_value:
+                if column is None:
+                    continue
+                if isinstance(column, str):
+                    cleaned = column.strip()
+                    if cleaned:
+                        columns.append(cleaned)
+                else:
+                    columns.append(str(column))
+            return columns
+
+        return []
 
     @staticmethod
     def _extract_records(result: Dict[str, Any]) -> List[Dict[str, Any]]:
