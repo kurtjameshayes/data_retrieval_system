@@ -29,7 +29,7 @@ class AnalysisPlan:
             - join_column: Column to use for joining with other queries
             
         # Analysis configuration 
-        analysis_config: Configuration for DataAnalysisEngine.run_suite()
+        analysis_plan: Configuration for DataAnalysisEngine.run_suite()
             - basic_statistics: bool
             - exploratory: bool
             - inferential_tests: List of test configurations
@@ -72,13 +72,13 @@ class AnalysisPlan:
         
         Args:
             plan_data: Dictionary containing plan information
-                Required fields: plan_id, plan_name, queries, analysis_config
+                Required fields: plan_id, plan_name, queries, analysis_plan
                 Optional fields: description, tags
         
         Returns:
             dict: Created plan document
         """
-        required_fields = ['plan_id', 'plan_name', 'queries', 'analysis_config']
+        required_fields = ['plan_id', 'plan_name', 'queries', 'analysis_plan']
         for field in required_fields:
             if field not in plan_data:
                 raise ValueError(f"Missing required field: {field}")
@@ -279,7 +279,7 @@ class AnalysisPlan:
             dict: Validation result with 'valid' bool and 'errors' list
         """
         errors = []
-        config = plan_data.get('analysis_config', {})
+        config = plan_data.get('analysis_plan', {})
         
         for query_cfg in plan_data.get('queries', []):
             join_col = query_cfg.get('join_column')

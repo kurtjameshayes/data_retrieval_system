@@ -135,7 +135,7 @@ Preferred communication style: Simple, everyday language.
 3. Validates that all target/feature columns in analysis_config exist
 4. Returns detailed errors if validation fails
 
-**Analysis Config Options**:
+**Analysis Plan Options** (stored in `analysis_plan` field):
 - `basic_statistics`: Mean, median, correlation matrix
 - `exploratory`: Data types, distributions, missing values
 - `linear_regression`: Features list and target column

@@ -806,7 +806,7 @@ export async function registerRoutes(
       const planData = req.body;
       
       // First, validate that all referenced columns exist in the query outputs
-      if (planData.queries && planData.queries.length > 0 && planData.analysis_config) {
+      if (planData.queries && planData.queries.length > 0 && planData.analysis_plan) {
         const validateScriptPath = path.join(process.cwd(), "python_src", "execute_analysis_plan.py");
         const validationResult = await runPythonScript(validateScriptPath, ["validate_plan", JSON.stringify(planData)]);
         
@@ -843,8 +843,8 @@ export async function registerRoutes(
     try {
       const updates = req.body;
       
-      // If queries or analysis_config are being updated, validate columns
-      if ((updates.queries && updates.queries.length > 0) || updates.analysis_config) {
+      // If queries or analysis_plan are being updated, validate columns
+      if ((updates.queries && updates.queries.length > 0) || updates.analysis_plan) {
         // Need to fetch current plan to merge with updates for full validation
         const getScriptPath = path.join(process.cwd(), "python_src", "manage_analysis_plan.py");
         const currentPlanResult = await runPythonScript(getScriptPath, ["get", req.params.planId]);
@@ -858,10 +858,10 @@ export async function registerRoutes(
           ...currentPlanResult.plan,
           ...updates,
           queries: updates.queries || currentPlanResult.plan.queries,
-          analysis_config: updates.analysis_config || currentPlanResult.plan.analysis_config
+          analysis_plan: updates.analysis_plan || currentPlanResult.plan.analysis_plan
         };
         
-        if (mergedPlan.queries && mergedPlan.queries.length > 0 && mergedPlan.analysis_config) {
+        if (mergedPlan.queries && mergedPlan.queries.length > 0 && mergedPlan.analysis_plan) {
           const validateScriptPath = path.join(process.cwd(), "python_src", "execute_analysis_plan.py");
           const validationResult = await runPythonScript(validateScriptPath, ["validate_plan", JSON.stringify(mergedPlan)]);
           

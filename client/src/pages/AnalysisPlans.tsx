@@ -48,7 +48,7 @@ interface PlanFormState {
   plan_name: string;
   description: string;
   queries: QueryWithColumns[];
-  analysis_config: AnalysisConfig;
+  analysis_plan: AnalysisConfig;
   tags: string[];
 }
 
@@ -62,7 +62,7 @@ const defaultFormState: PlanFormState = {
   plan_name: "",
   description: "",
   queries: [],
-  analysis_config: { ...defaultAnalysisConfig },
+  analysis_plan: { ...defaultAnalysisConfig },
   tags: [],
 };
 
@@ -229,8 +229,8 @@ export default function AnalysisPlans() {
   const updateAnalysisConfig = (key: keyof AnalysisConfig, value: any) => {
     setFormState(prev => ({
       ...prev,
-      analysis_config: {
-        ...prev.analysis_config,
+      analysis_plan: {
+        ...prev.analysis_plan,
         [key]: value,
       },
     }));
@@ -244,7 +244,7 @@ export default function AnalysisPlans() {
     if (formState.queries.length === 0) errors.push("At least one query is required");
     if (formState.queries.some(q => !q.query_id)) errors.push("All queries must be selected");
     
-    const config = formState.analysis_config;
+    const config = formState.analysis_plan;
     if (config.linear_regression) {
       if (!config.linear_regression.target) errors.push("Linear regression requires a target column");
       if (!config.linear_regression.features?.length) errors.push("Linear regression requires at least one feature");
@@ -274,7 +274,7 @@ export default function AnalysisPlans() {
         alias: q.alias || undefined,
         join_column: q.join_column || undefined,
       })),
-      analysis_config: formState.analysis_config,
+      analysis_plan: formState.analysis_plan,
       tags: formState.tags.length > 0 ? formState.tags : undefined,
       active: true,
     };
@@ -293,7 +293,7 @@ export default function AnalysisPlans() {
         alias: q.alias || undefined,
         join_column: q.join_column || undefined,
       })),
-      analysis_config: formState.analysis_config,
+      analysis_plan: formState.analysis_plan,
       tags: formState.tags.length > 0 ? formState.tags : undefined,
     };
     
@@ -315,7 +315,7 @@ export default function AnalysisPlans() {
       plan_name: plan.plan_name,
       description: plan.description || "",
       queries: queriesWithCols,
-      analysis_config: plan.analysis_config || { ...defaultAnalysisConfig },
+      analysis_plan: plan.analysis_plan || { ...defaultAnalysisConfig },
       tags: plan.tags || [],
     });
     
@@ -846,7 +846,7 @@ function PlanForm({
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="basic_statistics"
-                checked={!!formState.analysis_config.basic_statistics}
+                checked={!!formState.analysis_plan.basic_statistics}
                 onCheckedChange={(checked) => onUpdateConfig('basic_statistics', checked)}
                 data-testid="checkbox-basic-stats"
               />
@@ -858,7 +858,7 @@ function PlanForm({
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="exploratory"
-                checked={!!formState.analysis_config.exploratory}
+                checked={!!formState.analysis_plan.exploratory}
                 onCheckedChange={(checked) => onUpdateConfig('exploratory', checked)}
                 data-testid="checkbox-exploratory"
               />
@@ -872,7 +872,7 @@ function PlanForm({
             <div className="flex items-center justify-between">
               <Label className="text-sm">Linear Regression</Label>
               <Checkbox
-                checked={!!formState.analysis_config.linear_regression}
+                checked={!!formState.analysis_plan.linear_regression}
                 onCheckedChange={(checked) => {
                   if (checked) {
                     onUpdateConfig('linear_regression', { features: [], target: '' });
@@ -884,14 +884,14 @@ function PlanForm({
               />
             </div>
             
-            {formState.analysis_config.linear_regression && (
+            {formState.analysis_plan.linear_regression && (
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label className="text-xs">Target Column</Label>
                   <Select
-                    value={formState.analysis_config.linear_regression.target || ''}
+                    value={formState.analysis_plan.linear_regression.target || ''}
                     onValueChange={(value) => onUpdateConfig('linear_regression', {
-                      ...formState.analysis_config.linear_regression,
+                      ...formState.analysis_plan.linear_regression,
                       target: value,
                     })}
                     disabled={availableColumns.length === 0}
@@ -911,9 +911,9 @@ function PlanForm({
                   <Label className="text-xs">Feature Columns</Label>
                   <MultiColumnSelect
                     columns={availableColumns}
-                    selected={formState.analysis_config.linear_regression.features || []}
+                    selected={formState.analysis_plan.linear_regression.features || []}
                     onChange={(features) => onUpdateConfig('linear_regression', {
-                      ...formState.analysis_config.linear_regression,
+                      ...formState.analysis_plan.linear_regression,
                       features,
                     })}
                     testId="select-lr-features"
@@ -927,7 +927,7 @@ function PlanForm({
             <div className="flex items-center justify-between">
               <Label className="text-sm">Random Forest</Label>
               <Checkbox
-                checked={!!formState.analysis_config.random_forest}
+                checked={!!formState.analysis_plan.random_forest}
                 onCheckedChange={(checked) => {
                   if (checked) {
                     onUpdateConfig('random_forest', { features: [], target: '', n_estimators: 200 });
@@ -939,14 +939,14 @@ function PlanForm({
               />
             </div>
             
-            {formState.analysis_config.random_forest && (
+            {formState.analysis_plan.random_forest && (
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label className="text-xs">Target Column</Label>
                   <Select
-                    value={formState.analysis_config.random_forest.target || ''}
+                    value={formState.analysis_plan.random_forest.target || ''}
                     onValueChange={(value) => onUpdateConfig('random_forest', {
-                      ...formState.analysis_config.random_forest,
+                      ...formState.analysis_plan.random_forest,
                       target: value,
                     })}
                     disabled={availableColumns.length === 0}
@@ -966,9 +966,9 @@ function PlanForm({
                   <Label className="text-xs">Feature Columns</Label>
                   <MultiColumnSelect
                     columns={availableColumns}
-                    selected={formState.analysis_config.random_forest.features || []}
+                    selected={formState.analysis_plan.random_forest.features || []}
                     onChange={(features) => onUpdateConfig('random_forest', {
-                      ...formState.analysis_config.random_forest,
+                      ...formState.analysis_plan.random_forest,
                       features,
                     })}
                     testId="select-rf-features"
@@ -982,7 +982,7 @@ function PlanForm({
             <div className="flex items-center justify-between">
               <Label className="text-sm">Multivariate (PCA)</Label>
               <Checkbox
-                checked={!!formState.analysis_config.multivariate}
+                checked={!!formState.analysis_plan.multivariate}
                 onCheckedChange={(checked) => {
                   if (checked) {
                     onUpdateConfig('multivariate', { features: [], n_components: 2 });
@@ -994,15 +994,15 @@ function PlanForm({
               />
             </div>
             
-            {formState.analysis_config.multivariate && (
+            {formState.analysis_plan.multivariate && (
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label className="text-xs">Feature Columns</Label>
                   <MultiColumnSelect
                     columns={availableColumns}
-                    selected={formState.analysis_config.multivariate.features || []}
+                    selected={formState.analysis_plan.multivariate.features || []}
                     onChange={(features) => onUpdateConfig('multivariate', {
-                      ...formState.analysis_config.multivariate,
+                      ...formState.analysis_plan.multivariate,
                       features,
                     })}
                     testId="select-pca-features"
@@ -1015,9 +1015,9 @@ function PlanForm({
                     type="number"
                     min="1"
                     max="10"
-                    value={formState.analysis_config.multivariate.n_components || 2}
+                    value={formState.analysis_plan.multivariate.n_components || 2}
                     onChange={(e) => onUpdateConfig('multivariate', {
-                      ...formState.analysis_config.multivariate,
+                      ...formState.analysis_plan.multivariate,
                       n_components: parseInt(e.target.value) || 2,
                     })}
                     data-testid="input-pca-components"

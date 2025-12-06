@@ -133,7 +133,7 @@ export interface AnalysisPlan {
   plan_name: string;
   description?: string;
   queries: QueryConfig[];
-  analysis_config: AnalysisConfig;
+  analysis_plan: AnalysisConfig;
   tags?: string[];
   active?: boolean;
   created_at?: string;

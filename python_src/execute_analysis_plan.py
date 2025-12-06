@@ -182,7 +182,7 @@ def main():
             
             df = execute_queries_and_join(engine, plan.get('queries', []))
             
-            analysis_config = plan.get('analysis_config', {})
+            analysis_config = plan.get('analysis_plan', {})
             
             if not analysis_config:
                 analysis_results = {
