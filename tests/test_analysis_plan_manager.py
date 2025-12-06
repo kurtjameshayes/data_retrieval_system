@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
-from datetime import UTC, datetime
+from datetime import datetime
+
+try:  # Python 3.11+
+    from datetime import UTC
+except ImportError:  # Python <3.11
+    from datetime import timezone as _timezone
+
+    UTC = _timezone.utc
 
 import pandas as pd
 import pytest

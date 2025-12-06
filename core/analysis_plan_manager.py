@@ -8,7 +8,14 @@ delegating to the QueryEngine.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
+
+try:  # Python 3.11+
+    from datetime import UTC
+except ImportError:  # Python <3.11
+    from datetime import timezone as _timezone
+
+    UTC = _timezone.utc
 from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
