@@ -653,13 +653,13 @@ export default function AnalysisPlans() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-0">
-                      <div className="overflow-auto max-h-[400px] border rounded-md">
-                        <table className="text-xs" style={{ minWidth: 'max-content' }}>
-                          <thead className="bg-muted sticky top-0 z-10">
+                      <div className="border rounded-md" style={{ maxHeight: '400px', overflow: 'auto' }}>
+                        <table className="text-xs border-collapse" style={{ width: 'max-content', minWidth: '100%' }}>
+                          <thead className="bg-muted" style={{ position: 'sticky', top: 0, zIndex: 10 }}>
                             <tr>
-                              <th className="px-3 py-2 text-left font-medium border-b sticky left-0 bg-muted z-20">#</th>
+                              <th className="px-3 py-2 text-left font-medium border-b bg-muted" style={{ position: 'sticky', left: 0, zIndex: 20 }}>#</th>
                               {executionResult.columns?.map((col: string, i: number) => (
-                                <th key={i} className="px-3 py-2 text-left font-medium border-b whitespace-nowrap" title={col}>
+                                <th key={i} className="px-3 py-2 text-left font-medium border-b bg-muted" style={{ whiteSpace: 'nowrap' }} title={col}>
                                   {col.length > 40 ? col.substring(0, 40) + '...' : col}
                                 </th>
                               ))}
@@ -668,9 +668,9 @@ export default function AnalysisPlans() {
                           <tbody>
                             {executionResult.data_sample?.map((row: Record<string, any>, rowIndex: number) => (
                               <tr key={rowIndex} className="border-b hover:bg-muted/50">
-                                <td className="px-3 py-2 text-muted-foreground sticky left-0 bg-background">{rowIndex + 1}</td>
+                                <td className="px-3 py-2 text-muted-foreground bg-background" style={{ position: 'sticky', left: 0, zIndex: 5 }}>{rowIndex + 1}</td>
                                 {executionResult.columns?.map((col: string, colIndex: number) => (
-                                  <td key={colIndex} className="px-3 py-2 whitespace-nowrap" title={String(row[col] ?? '')}>
+                                  <td key={colIndex} className="px-3 py-2" style={{ whiteSpace: 'nowrap' }} title={String(row[col] ?? '')}>
                                     {String(row[col] ?? '')}
                                   </td>
                                 ))}
