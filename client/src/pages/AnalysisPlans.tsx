@@ -760,6 +760,13 @@ function PlanForm({
             </Button>
           </div>
           
+          {loadingColumns && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Fetching latest column definitions...
+            </div>
+          )}
+          
           {formState.queries.length === 0 ? (
             <div className="text-sm text-muted-foreground text-center py-6 border-2 border-dashed rounded-lg">
               No queries added. Click "Add Query" to select data sources.
@@ -889,17 +896,18 @@ function PlanForm({
                 <div className="space-y-1.5">
                   <Label className="text-xs">Target Column</Label>
                   <Select
-                    value={formState.analysis_plan.linear_regression.target || ''}
+                    value={formState.analysis_plan.linear_regression.target || "__none__"}
                     onValueChange={(value) => onUpdateConfig('linear_regression', {
                       ...formState.analysis_plan.linear_regression,
-                      target: value,
+                      target: value === "__none__" ? "" : value,
                     })}
                     disabled={availableColumns.length === 0}
                   >
                     <SelectTrigger data-testid="select-lr-target">
-                      <SelectValue placeholder="Select target..." />
+                      <SelectValue placeholder={loadingColumns ? "Loading..." : "Select target..."} />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="__none__">Select target...</SelectItem>
                       {availableColumns.map((col) => (
                         <SelectItem key={col} value={col}>{col}</SelectItem>
                       ))}
@@ -944,17 +952,18 @@ function PlanForm({
                 <div className="space-y-1.5">
                   <Label className="text-xs">Target Column</Label>
                   <Select
-                    value={formState.analysis_plan.random_forest.target || ''}
+                    value={formState.analysis_plan.random_forest.target || "__none__"}
                     onValueChange={(value) => onUpdateConfig('random_forest', {
                       ...formState.analysis_plan.random_forest,
-                      target: value,
+                      target: value === "__none__" ? "" : value,
                     })}
                     disabled={availableColumns.length === 0}
                   >
                     <SelectTrigger data-testid="select-rf-target">
-                      <SelectValue placeholder="Select target..." />
+                      <SelectValue placeholder={loadingColumns ? "Loading..." : "Select target..."} />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="__none__">Select target...</SelectItem>
                       {availableColumns.map((col) => (
                         <SelectItem key={col} value={col}>{col}</SelectItem>
                       ))}
