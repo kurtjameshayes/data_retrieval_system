@@ -116,3 +116,16 @@ def test_linear_regression_reports_missing_columns(sample_df):
         engine.linear_regression(sample_df, features=["missing_feature"], target="value")
 
     assert "missing_feature" in str(excinfo.value)
+
+
+def test_case_insensitive_column_lookup(sample_df):
+    engine = DataAnalysisEngine()
+    uppercase_df = sample_df.rename(columns=str.upper)
+
+    result = engine.linear_regression(
+        uppercase_df,
+        features=["harvest"],
+        target="value",
+    )
+
+    assert "coefficients" in result
