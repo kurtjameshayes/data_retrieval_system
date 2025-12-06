@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional
+
+try:  # Python 3.11+
+    from datetime import UTC
+except ImportError:  # Python <3.11
+    from datetime import timezone as _timezone
+
+    UTC = _timezone.utc
 
 from pymongo import ASCENDING, MongoClient
 
