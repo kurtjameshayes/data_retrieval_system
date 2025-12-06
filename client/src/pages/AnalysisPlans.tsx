@@ -471,29 +471,31 @@ export default function AnalysisPlans() {
       )}
 
       <Dialog open={createDialogOpen} onOpenChange={(open) => { if (!open) resetFormState(); setCreateDialogOpen(open); }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
-          <DialogHeader>
+        <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle>Create Analysis Plan</DialogTitle>
             <DialogDescription>
               Configure queries, joins, and analysis options.
             </DialogDescription>
           </DialogHeader>
           
-          <PlanForm
-            formState={formState}
-            setFormState={setFormState}
-            queries={queries}
-            availableColumns={availableColumns}
-            loadingColumns={loadingColumns}
-            validationErrors={validationErrors}
-            onAddQuery={addQueryToForm}
-            onRemoveQuery={removeQueryFromForm}
-            onUpdateQuery={updateQueryInForm}
-            onUpdateConfig={updateAnalysisConfig}
-            isEdit={false}
-          />
+          <div className="flex-1 overflow-y-auto min-h-0">
+            <PlanForm
+              formState={formState}
+              setFormState={setFormState}
+              queries={queries}
+              availableColumns={availableColumns}
+              loadingColumns={loadingColumns}
+              validationErrors={validationErrors}
+              onAddQuery={addQueryToForm}
+              onRemoveQuery={removeQueryFromForm}
+              onUpdateQuery={updateQueryInForm}
+              onUpdateConfig={updateAnalysisConfig}
+              isEdit={false}
+            />
+          </div>
           
-          <DialogFooter>
+          <DialogFooter className="flex-shrink-0">
             <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
               Cancel
             </Button>
@@ -510,29 +512,31 @@ export default function AnalysisPlans() {
       </Dialog>
 
       <Dialog open={editDialogOpen} onOpenChange={(open) => { if (!open) { setSelectedPlan(null); resetFormState(); } setEditDialogOpen(open); }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
-          <DialogHeader>
+        <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle>Edit Analysis Plan</DialogTitle>
             <DialogDescription>
               Update the analysis configuration for {selectedPlan?.plan_name}.
             </DialogDescription>
           </DialogHeader>
           
-          <PlanForm
-            formState={formState}
-            setFormState={setFormState}
-            queries={queries}
-            availableColumns={availableColumns}
-            loadingColumns={loadingColumns}
-            validationErrors={validationErrors}
-            onAddQuery={addQueryToForm}
-            onRemoveQuery={removeQueryFromForm}
-            onUpdateQuery={updateQueryInForm}
-            onUpdateConfig={updateAnalysisConfig}
-            isEdit={true}
-          />
+          <div className="flex-1 overflow-y-auto min-h-0">
+            <PlanForm
+              formState={formState}
+              setFormState={setFormState}
+              queries={queries}
+              availableColumns={availableColumns}
+              loadingColumns={loadingColumns}
+              validationErrors={validationErrors}
+              onAddQuery={addQueryToForm}
+              onRemoveQuery={removeQueryFromForm}
+              onUpdateQuery={updateQueryInForm}
+              onUpdateConfig={updateAnalysisConfig}
+              isEdit={true}
+            />
+          </div>
           
-          <DialogFooter>
+          <DialogFooter className="flex-shrink-0">
             <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
               Cancel
             </Button>
@@ -699,8 +703,7 @@ function PlanForm({
   isEdit,
 }: PlanFormProps) {
   return (
-    <ScrollArea className="flex-1 -mx-6 px-6">
-      <div className="space-y-6 py-4">
+    <div className="space-y-6 py-4 pr-2">
         {validationErrors.length > 0 && (
           <div className="bg-destructive/10 border border-destructive/20 rounded-md p-3 space-y-1">
             {validationErrors.map((error, i) => (
@@ -1025,7 +1028,6 @@ function PlanForm({
           </div>
         </div>
       </div>
-    </ScrollArea>
   );
 }
 
