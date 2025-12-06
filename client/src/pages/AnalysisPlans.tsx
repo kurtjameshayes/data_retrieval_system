@@ -809,15 +809,15 @@ function PlanForm({
                     <div className="space-y-1.5">
                       <Label className="text-xs">Join Column</Label>
                       <Select
-                        value={queryConfig.join_column}
-                        onValueChange={(value) => onUpdateQuery(index, 'join_column', value)}
+                        value={queryConfig.join_column || "__none__"}
+                        onValueChange={(value) => onUpdateQuery(index, 'join_column', value === "__none__" ? "" : value)}
                         disabled={availableColumns.length === 0}
                       >
                         <SelectTrigger data-testid={`select-join-${index}`}>
                           <SelectValue placeholder={loadingColumns ? "Loading..." : "Select column..."} />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="">None</SelectItem>
+                          <SelectItem value="__none__">None</SelectItem>
                           {availableColumns.map((col) => (
                             <SelectItem key={col} value={col}>
                               {col}
