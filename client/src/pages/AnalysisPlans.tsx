@@ -75,6 +75,8 @@ export default function AnalysisPlans() {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [resultDialogOpen, setResultDialogOpen] = useState(false);
+  const [recordDetailOpen, setRecordDetailOpen] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState<Record<string, any> | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<AnalysisPlan | null>(null);
   const [executionResult, setExecutionResult] = useState<any>(null);
   const [formState, setFormState] = useState<PlanFormState>({ ...defaultFormState });
@@ -667,7 +669,12 @@ export default function AnalysisPlans() {
                           </thead>
                           <tbody>
                             {executionResult.data_sample?.map((row: Record<string, any>, rowIndex: number) => (
-                              <tr key={rowIndex} className="border-b hover:bg-muted/50">
+                              <tr 
+                                key={rowIndex} 
+                                className="border-b hover:bg-muted/50 cursor-pointer"
+                                onDoubleClick={() => { setSelectedRecord(row); setRecordDetailOpen(true); }}
+                                title="Double-click to view full record"
+                              >
                                 <td className="px-3 py-2 text-muted-foreground bg-background" style={{ position: 'sticky', left: 0, zIndex: 5 }}>{rowIndex + 1}</td>
                                 {executionResult.columns?.map((col: string, colIndex: number) => (
                                   <td key={colIndex} className="px-3 py-2" style={{ whiteSpace: 'nowrap' }} title={String(row[col] ?? '')}>
@@ -713,6 +720,32 @@ export default function AnalysisPlans() {
           
           <DialogFooter>
             <Button variant="outline" onClick={() => setResultDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={recordDetailOpen} onOpenChange={setRecordDetailOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Record Details</DialogTitle>
+            <DialogDescription>
+              Full record data ({Object.keys(selectedRecord || {}).length} fields)
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="flex-1 -mx-6 px-6">
+            <div className="space-y-2 py-4">
+              {selectedRecord && Object.entries(selectedRecord).map(([key, value]) => (
+                <div key={key} className="border-b pb-2">
+                  <div className="text-xs text-muted-foreground font-medium mb-1">{key}</div>
+                  <div className="text-sm font-mono break-all">{String(value ?? '')}</div>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRecordDetailOpen(false)}>
               Close
             </Button>
           </DialogFooter>
