@@ -158,19 +158,25 @@ def preview_from_query_ids(query_ids: list, join_on: list, join_type: str = "inn
     
     Args:
         query_ids: List of stored query IDs
-        join_on: List of columns to join on
+        join_on: List of columns to join on - must match query_ids length exactly
         join_type: Join type (inner, left, right, outer)
         limit: Maximum number of rows to return
         
     Returns:
         Dict with joined data preview
     """
+    if len(join_on) != len(query_ids):
+        return {
+            "success": False,
+            "error": f"join_on must have exactly {len(query_ids)} entries (one per query). Got {len(join_on)}."
+        }
+    
     queries = []
     for i, qid in enumerate(query_ids):
         queries.append({
             "query_id": qid,
             "alias": qid,
-            "join_column": join_on[i] if i < len(join_on) else join_on[0]
+            "join_column": join_on[i]
         })
     
     plan_data = {
