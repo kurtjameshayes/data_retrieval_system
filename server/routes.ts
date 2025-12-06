@@ -804,6 +804,7 @@ export async function registerRoutes(
   app.post("/api/analysis-plans", async (req, res) => {
     try {
       const planData = req.body;
+      console.log("Creating analysis plan with data:", JSON.stringify(planData, null, 2));
       
       // First, validate that all referenced columns exist in the query outputs
       if (planData.queries && planData.queries.length > 0 && planData.analysis_plan) {
@@ -842,6 +843,7 @@ export async function registerRoutes(
   app.put("/api/analysis-plans/:planId", async (req, res) => {
     try {
       const updates = req.body;
+      console.log("Updating analysis plan with data:", JSON.stringify(updates, null, 2));
       
       // If queries or analysis_plan are being updated, validate columns
       if ((updates.queries && updates.queries.length > 0) || updates.analysis_plan) {
