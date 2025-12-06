@@ -1009,5 +1009,138 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================
+  // Query Column Cache Endpoints
+  // Get cached column information for stored queries
+  // ============================================================
+
+  // Get cached columns for a single query
+  app.get("/api/query-columns/:queryId", async (req, res) => {
+    try {
+      const forceRefresh = req.query.refresh === "true";
+      const scriptPath = path.join(process.cwd(), "python_src", "get_query_columns.py");
+      const args = ["-q", req.params.queryId];
+      if (forceRefresh) args.push("-f");
+      
+      const result = await runPythonScript(scriptPath, args);
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error("Error fetching query columns:", error);
+      res.status(500).json({ error: "Failed to fetch query columns" });
+    }
+  });
+
+  // Get cached columns for multiple queries
+  app.post("/api/query-columns/batch", async (req, res) => {
+    try {
+      const { queryIds, forceRefresh } = req.body;
+      
+      if (!queryIds || !Array.isArray(queryIds) || queryIds.length === 0) {
+        return res.status(400).json({ error: "queryIds array is required" });
+      }
+
+      const scriptPath = path.join(process.cwd(), "python_src", "get_query_columns.py");
+      const args = ["-Q", JSON.stringify(queryIds)];
+      if (forceRefresh) args.push("-f");
+      
+      const result = await runPythonScript(scriptPath, args);
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error("Error fetching batch query columns:", error);
+      res.status(500).json({ error: "Failed to fetch query columns" });
+    }
+  });
+
+  // ============================================================
+  // Data Preview Endpoints
+  // Preview joined query data without running analysis
+  // ============================================================
+
+  // Preview joined data from query IDs directly
+  // joinOn can be:
+  // - A single string (shared join key for all queries)
+  // - An array with 1 element (shared join key for all queries)
+  // - An array with same length as queryIds (per-query join columns)
+  app.post("/api/data-preview", async (req, res) => {
+    try {
+      const { queryIds, joinOn, joinType, limit } = req.body;
+      
+      if (!queryIds || !Array.isArray(queryIds) || queryIds.length < 2) {
+        return res.status(400).json({ error: "At least 2 queryIds are required" });
+      }
+      
+      let joinOnArray: string[];
+      if (typeof joinOn === "string") {
+        joinOnArray = Array(queryIds.length).fill(joinOn);
+      } else if (Array.isArray(joinOn) && joinOn.length === 1) {
+        joinOnArray = Array(queryIds.length).fill(joinOn[0]);
+      } else if (Array.isArray(joinOn) && joinOn.length === queryIds.length) {
+        joinOnArray = joinOn;
+      } else if (Array.isArray(joinOn) && joinOn.length > 0) {
+        return res.status(400).json({ 
+          error: `joinOn must be a single shared key, or have exactly ${queryIds.length} entries (one per query). Got ${joinOn.length} entries.` 
+        });
+      } else {
+        return res.status(400).json({ error: "joinOn column(s) required" });
+      }
+      
+      const allowedJoinTypes = ["inner", "left", "right", "outer"];
+      const validatedJoinType = allowedJoinTypes.includes(joinType) ? joinType : "inner";
+
+      const scriptPath = path.join(process.cwd(), "python_src", "preview_joined_data.py");
+      const args = [
+        "-q", JSON.stringify(queryIds),
+        "-j", JSON.stringify(joinOnArray),
+        "-t", validatedJoinType,
+        "-l", String(Math.min(Math.max(1, limit || 100), 1000))
+      ];
+      
+      const result = await runPythonScript(scriptPath, args);
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error("Error previewing joined data:", error);
+      res.status(500).json({ error: "Failed to preview joined data" });
+    }
+  });
+
+  // Preview joined data from an analysis plan
+  app.get("/api/data-preview/plan/:planId", async (req, res) => {
+    try {
+      const limit = Math.min(Math.max(1, parseInt(req.query.limit as string) || 100), 1000);
+      const requestedJoinType = req.query.joinType as string;
+      const allowedJoinTypes = ["inner", "left", "right", "outer"];
+      const joinType = allowedJoinTypes.includes(requestedJoinType) ? requestedJoinType : "inner";
+      
+      const scriptPath = path.join(process.cwd(), "python_src", "preview_joined_data.py");
+      const args = ["-p", req.params.planId, "-l", String(limit), "-t", joinType];
+      
+      const result = await runPythonScript(scriptPath, args);
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error("Error previewing plan data:", error);
+      res.status(500).json({ error: "Failed to preview plan data" });
+    }
+  });
+
   return httpServer;
 }

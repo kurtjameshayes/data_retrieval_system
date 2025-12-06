@@ -1,5 +1,6 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from models.query_result import QueryResult
+from models.query_column_cache import QueryColumnCache
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -7,17 +8,20 @@ logger = logging.getLogger(__name__)
 
 class CacheManager:
     """
-    Manages caching of query results using MongoDB.
+    Manages caching of query results and column metadata using MongoDB.
     """
     
-    def __init__(self, query_result_model: QueryResult = None):
+    def __init__(self, query_result_model: QueryResult = None, 
+                 column_cache_model: QueryColumnCache = None):
         """
         Initialize cache manager.
         
         Args:
             query_result_model: QueryResult model instance
+            column_cache_model: QueryColumnCache model instance
         """
         self.query_result_model = query_result_model or QueryResult()
+        self.column_cache = column_cache_model or QueryColumnCache()
     
     def get(self, source_id: str, parameters: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -98,3 +102,60 @@ class CacheManager:
             return {
                 "error": str(e)
             }
+    
+    def cache_query_columns(
+        self, 
+        query_id: str, 
+        columns: List[str],
+        column_types: Optional[Dict[str, str]] = None,
+        row_count: Optional[int] = None
+    ) -> bool:
+        """
+        Cache column names for a query.
+        
+        Args:
+            query_id: Stored query identifier
+            columns: List of column names
+            column_types: Optional dict mapping column names to types
+            row_count: Optional row count from query results
+            
+        Returns:
+            bool: True if successful
+        """
+        return self.column_cache.cache_columns(query_id, columns, column_types, row_count)
+    
+    def get_query_columns(self, query_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get cached columns for a query.
+        
+        Args:
+            query_id: Stored query identifier
+            
+        Returns:
+            Dict with columns, column_types, row_count or None if not found
+        """
+        return self.column_cache.get_columns(query_id)
+    
+    def get_columns_for_queries(self, query_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """
+        Get cached columns for multiple queries.
+        
+        Args:
+            query_ids: List of stored query identifiers
+            
+        Returns:
+            Dict mapping query_id to column info
+        """
+        return self.column_cache.get_columns_for_queries(query_ids)
+    
+    def invalidate_query_columns(self, query_id: str) -> bool:
+        """
+        Invalidate cached columns for a query.
+        
+        Args:
+            query_id: Stored query identifier
+            
+        Returns:
+            bool: True if entry was deleted
+        """
+        return self.column_cache.invalidate(query_id)

@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, Plug, Database, Settings, Terminal, Activity, FlaskConical } from "lucide-react";
+import { LayoutDashboard, Plug, Database, Settings, Terminal, Activity, FlaskConical, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import bgPattern from "@assets/generated_images/subtle_dark_technical_grid_pattern_background.png";
 
@@ -12,6 +12,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { href: "/queries", icon: Terminal, label: "Query Builder" },
     { href: "/analysis", icon: Activity, label: "Analysis" },
     { href: "/analysis-plans", icon: FlaskConical, label: "Analysis Plans" },
+    { href: "/data-preview", icon: Eye, label: "Data Preview" },
   ];
 
   return (

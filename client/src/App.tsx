@@ -11,6 +11,7 @@ import Connectors from "@/pages/Connectors";
 import Queries from "@/pages/Queries";
 import Analysis from "@/pages/Analysis";
 import AnalysisPlans from "@/pages/AnalysisPlans";
+import DataPreview from "@/pages/DataPreview";
 
 function Router() {
   return (
@@ -21,6 +22,7 @@ function Router() {
         <Route path="/queries" component={Queries} />
         <Route path="/analysis" component={Analysis} />
         <Route path="/analysis-plans" component={AnalysisPlans} />
+        <Route path="/data-preview" component={DataPreview} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

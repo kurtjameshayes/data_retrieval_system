@@ -75,6 +75,10 @@ class QueryEngine:
                 if should_use_cache:
                     self.cache_manager.set(source_id, parameters, result["data"], query_id=query_id)
                 
+                # Cache column names if query_id is provided
+                if query_id:
+                    self._cache_columns_from_result(query_id, result)
+                
                 result["source"] = "connector"
                 
                 # Add query_id if provided
@@ -476,3 +480,72 @@ class QueryEngine:
             "cache_stats": self.cache_manager.get_stats(),
             "available_sources": len(self.connector_manager.list_sources())
         }
+    
+    def _cache_columns_from_result(self, query_id: str, result: Dict[str, Any]) -> None:
+        """
+        Extract and cache column names from query result.
+        Collects ALL unique column keys across the entire result set efficiently
+        by only tracking keys (not values) after initial type discovery.
+        
+        Args:
+            query_id: Stored query identifier
+            result: Query result containing data
+        """
+        try:
+            records = self._extract_records(result)
+            if not records:
+                return
+            
+            row_count = len(records)
+            all_columns = set()
+            column_types = {}
+            
+            for record in records:
+                new_keys = set(record.keys()) - all_columns
+                if new_keys:
+                    for col in new_keys:
+                        val = record.get(col)
+                        column_types[col] = type(val).__name__ if val is not None else "NoneType"
+                    all_columns.update(new_keys)
+                else:
+                    for col in record.keys():
+                        if column_types.get(col) == "NoneType":
+                            val = record.get(col)
+                            if val is not None:
+                                column_types[col] = type(val).__name__
+            
+            columns = sorted(list(all_columns))
+            
+            self.cache_manager.cache_query_columns(
+                query_id=query_id,
+                columns=columns,
+                column_types=column_types,
+                row_count=row_count
+            )
+            logger.info(f"Cached {len(columns)} columns for query {query_id} from {row_count} records")
+        except Exception as e:
+            logger.warning(f"Failed to cache columns for query {query_id}: {str(e)}")
+    
+    def get_cached_columns(self, query_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get cached column names for a query.
+        
+        Args:
+            query_id: Stored query identifier
+            
+        Returns:
+            Dict with columns info or None if not cached
+        """
+        return self.cache_manager.get_query_columns(query_id)
+    
+    def get_cached_columns_for_queries(self, query_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """
+        Get cached columns for multiple queries.
+        
+        Args:
+            query_ids: List of stored query identifiers
+            
+        Returns:
+            Dict mapping query_id to column info
+        """
+        return self.cache_manager.get_columns_for_queries(query_ids)
