@@ -727,24 +727,24 @@ export default function AnalysisPlans() {
       </Dialog>
 
       <Dialog open={recordDetailOpen} onOpenChange={setRecordDetailOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle>Record Details</DialogTitle>
             <DialogDescription>
               Full record data ({Object.keys(selectedRecord || {}).length} fields)
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="flex-1 -mx-6 px-6">
-            <div className="space-y-2 py-4">
+          <div className="flex-1 overflow-y-auto min-h-0 -mx-6 px-6" style={{ maxHeight: 'calc(80vh - 140px)' }}>
+            <div className="space-y-3 py-4">
               {selectedRecord && Object.entries(selectedRecord).map(([key, value]) => (
-                <div key={key} className="border-b pb-2">
-                  <div className="text-xs text-muted-foreground font-medium mb-1">{key}</div>
-                  <div className="text-sm font-mono break-all">{String(value ?? '')}</div>
+                <div key={key} className="border-b pb-3">
+                  <div className="text-xs text-muted-foreground font-medium mb-1 break-all">{key}</div>
+                  <div className="text-sm font-mono break-all bg-muted/50 p-2 rounded">{String(value ?? '')}</div>
                 </div>
               ))}
             </div>
-          </ScrollArea>
-          <DialogFooter>
+          </div>
+          <DialogFooter className="flex-shrink-0">
             <Button variant="outline" onClick={() => setRecordDetailOpen(false)}>
               Close
             </Button>
