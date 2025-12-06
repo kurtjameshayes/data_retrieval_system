@@ -178,11 +178,12 @@ export default function AnalysisPlans() {
       }));
       
       const result = await api.getJoinedColumns(apiQueries);
-      setAvailableColumns(result.columns);
+      const uniqueColumns = Array.from(new Set(result.columns));
+      setAvailableColumns(uniqueColumns);
       
       const updatedQueries = queryConfigs.map(q => ({
         ...q,
-        columns: result.columns,
+        columns: uniqueColumns,
       }));
       setFormState(prev => ({ ...prev, queries: updatedQueries }));
     } catch (error) {
