@@ -276,18 +276,36 @@ class CensusConnector(BaseConnector):
         if not description_map:
             return result
         
+        attribute_descriptions = {
+            code: desc
+            for code, desc in description_map.items()
+            if self._is_valid_description(desc)
+        }
+        
         # Build the rename map while keeping column order intact and avoiding collisions.
         used_names: Set[str] = set(column_names)
         rename_map: Dict[str, str] = {}
+        conflicts: List[str] = []
         for code in column_names:
-            description = (description_map.get(code) or "").strip()
-            if not description:
+            description = description_map.get(code)
+            if not self._is_valid_description(description):
                 continue
-            final_name = self._dedupe_column_name(description, code, used_names)
-            if final_name == code:
-                continue
-            rename_map[code] = final_name
-            used_names.add(final_name)
+            candidate_name = description  # Preserve attr_name wording exactly.
+            if candidate_name not in used_names:
+                rename_map[code] = candidate_name
+                used_names.add(candidate_name)
+            else:
+                conflicts.append(code)
+        
+        metadata = result.setdefault("metadata", {})
+        metadata.setdefault("column_description_source", "attr_name")
+        if attribute_descriptions:
+            metadata.setdefault("attribute_descriptions", {}).update(attribute_descriptions)
+        if conflicts:
+            conflict_store = metadata.setdefault("column_name_conflicts", [])
+            for code in conflicts:
+                if code not in conflict_store:
+                    conflict_store.append(code)
         
         if not rename_map:
             return result
@@ -315,13 +333,6 @@ class CensusConnector(BaseConnector):
         metadata = result.setdefault("metadata", {})
         overrides = metadata.setdefault("column_name_overrides", {})
         overrides.update(rename_map)
-        metadata.setdefault("column_description_source", "attr_name")
-        metadata.setdefault("attribute_descriptions", {})
-        metadata["attribute_descriptions"].update({
-            code: description_map.get(code)
-            for code in rename_map.keys()
-            if description_map.get(code)
-        })
         if dataset:
             metadata.setdefault("dataset", dataset)
         metadata.setdefault("notes", [])
@@ -348,20 +359,9 @@ class CensusConnector(BaseConnector):
         stored_params = stored_query.get("parameters") or {}
         return stored_params.get("dataset")
     
-    def _dedupe_column_name(self, candidate: str, code: str, used_names: set) -> str:
-        if candidate not in used_names:
-            return candidate
-        
-        preferred = f"{candidate} ({code})"
-        if preferred not in used_names:
-            return preferred
-        
-        suffix = 2
-        while True:
-            alt = f"{preferred} #{suffix}"
-            if alt not in used_names:
-                return alt
-            suffix += 1
+    @staticmethod
+    def _is_valid_description(value: Optional[Any]) -> bool:
+        return isinstance(value, str) and bool(value.strip())
     
 
 

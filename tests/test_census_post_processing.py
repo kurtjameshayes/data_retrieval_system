@@ -127,6 +127,44 @@ class TestCensusConnectorProcessQueryResult:
         assert "Total population" in dataframe.columns
         assert "B01001_001E" not in dataframe.columns
         assert dataframe.loc[0, "Total population"] == "100"
+    
+    def test_duplicate_descriptions_do_not_get_mutated(self):
+        connector = self._build_connector({
+            "B22010_001E": "Duplicate label",
+            "B22010_002E": "Duplicate label",
+        })
+        
+        result = {
+            "metadata": {},
+            "data": [
+                {
+                    "NAME": "ZCTA 13579",
+                    "B22010_001E": "10",
+                    "B22010_002E": "5",
+                },
+            ],
+            "schema": {
+                "fields": [
+                    {"name": "NAME", "type": "string"},
+                    {"name": "B22010_001E", "type": "string"},
+                    {"name": "B22010_002E", "type": "string"},
+                ]
+            },
+        }
+        
+        processed = connector.process_query_result(copy.deepcopy(result), context={})
+        
+        record = processed["data"][0]
+        assert record["Duplicate label"] == "10"
+        assert record["B22010_002E"] == "5"
+        assert "Duplicate label (B22010_002E)" not in record
+        
+        metadata = processed["metadata"]
+        overrides = metadata["column_name_overrides"]
+        assert overrides["B22010_001E"] == "Duplicate label"
+        assert "B22010_002E" not in overrides
+        assert "B22010_002E" in metadata["column_name_conflicts"]
+        assert metadata["attribute_descriptions"]["B22010_002E"] == "Duplicate label"
 
 class StubConnector(BaseConnector):
     def __init__(self):
