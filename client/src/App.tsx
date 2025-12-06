@@ -10,6 +10,7 @@ import Home from "@/pages/Home";
 import Connectors from "@/pages/Connectors";
 import Queries from "@/pages/Queries";
 import Analysis from "@/pages/Analysis";
+import AnalysisPlans from "@/pages/AnalysisPlans";
 
 function Router() {
   return (
@@ -19,6 +20,7 @@ function Router() {
         <Route path="/connectors" component={Connectors} />
         <Route path="/queries" component={Queries} />
         <Route path="/analysis" component={Analysis} />
+        <Route path="/analysis-plans" component={AnalysisPlans} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

@@ -715,5 +715,297 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================
+  // Analysis Plans Endpoints
+  // Manage and execute configurable multi-query analysis plans
+  // ============================================================
+
+  // Helper to run Python scripts and return results
+  const runPythonScript = (scriptPath: string, args: string[]): Promise<any> => {
+    return new Promise((resolve, reject) => {
+      const pythonProcess = spawn("python3", [scriptPath, ...args], {
+        env: { ...process.env },
+        cwd: process.cwd(),
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      pythonProcess.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      pythonProcess.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      pythonProcess.on("close", (code) => {
+        console.log(`Python script exited with code ${code}`);
+        if (stderr) {
+          console.log("Python stderr:", stderr);
+        }
+
+        try {
+          const result = stdout.trim() ? JSON.parse(stdout.trim()) : {
+            success: false,
+            error: stderr || "No output from Python script",
+          };
+          resolve(result);
+        } catch (parseError) {
+          reject(new Error(`Failed to parse Python output: ${stdout.substring(0, 500)}`));
+        }
+      });
+
+      pythonProcess.on("error", (error) => {
+        reject(error);
+      });
+    });
+  };
+
+  // List all analysis plans
+  app.get("/api/analysis-plans", async (req, res) => {
+    try {
+      const activeOnly = req.query.active === "true";
+      const scriptPath = path.join(process.cwd(), "python_src", "manage_analysis_plan.py");
+      const args = ["list"];
+      if (activeOnly) args.push("--active");
+      
+      const result = await runPythonScript(scriptPath, args);
+      
+      if (result.success) {
+        res.json(result.plans);
+      } else {
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error("Error fetching analysis plans:", error);
+      res.status(500).json({ error: "Failed to fetch analysis plans" });
+    }
+  });
+
+  // Get single analysis plan
+  app.get("/api/analysis-plans/:planId", async (req, res) => {
+    try {
+      const scriptPath = path.join(process.cwd(), "python_src", "manage_analysis_plan.py");
+      const result = await runPythonScript(scriptPath, ["get", req.params.planId]);
+      
+      if (result.success) {
+        res.json(result.plan);
+      } else {
+        res.status(404).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error("Error fetching analysis plan:", error);
+      res.status(500).json({ error: "Failed to fetch analysis plan" });
+    }
+  });
+
+  // Create analysis plan (with column validation)
+  app.post("/api/analysis-plans", async (req, res) => {
+    try {
+      const planData = req.body;
+      
+      // First, validate that all referenced columns exist in the query outputs
+      if (planData.queries && planData.queries.length > 0 && planData.analysis_config) {
+        const validateScriptPath = path.join(process.cwd(), "python_src", "execute_analysis_plan.py");
+        const validationResult = await runPythonScript(validateScriptPath, ["validate_plan", JSON.stringify(planData)]);
+        
+        if (!validationResult.success) {
+          return res.status(400).json({ error: validationResult.error });
+        }
+        
+        if (validationResult.validation && !validationResult.validation.valid) {
+          return res.status(400).json({ 
+            error: "Column validation failed", 
+            validation_errors: validationResult.validation.errors,
+            available_columns: validationResult.available_columns
+          });
+        }
+      }
+      
+      // Proceed with creation if validation passes
+      const scriptPath = path.join(process.cwd(), "python_src", "manage_analysis_plan.py");
+      const result = await runPythonScript(scriptPath, ["create", JSON.stringify(req.body)]);
+      
+      if (result.success) {
+        res.status(201).json(result.plan);
+      } else {
+        res.status(400).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error("Error creating analysis plan:", error);
+      res.status(500).json({ error: "Failed to create analysis plan" });
+    }
+  });
+
+  // Update analysis plan (with column validation)
+  app.put("/api/analysis-plans/:planId", async (req, res) => {
+    try {
+      const updates = req.body;
+      
+      // If queries or analysis_config are being updated, validate columns
+      if ((updates.queries && updates.queries.length > 0) || updates.analysis_config) {
+        // Need to fetch current plan to merge with updates for full validation
+        const getScriptPath = path.join(process.cwd(), "python_src", "manage_analysis_plan.py");
+        const currentPlanResult = await runPythonScript(getScriptPath, ["get", req.params.planId]);
+        
+        if (!currentPlanResult.success || !currentPlanResult.plan) {
+          return res.status(404).json({ error: "Plan not found" });
+        }
+        
+        // Merge current plan with updates for validation
+        const mergedPlan = {
+          ...currentPlanResult.plan,
+          ...updates,
+          queries: updates.queries || currentPlanResult.plan.queries,
+          analysis_config: updates.analysis_config || currentPlanResult.plan.analysis_config
+        };
+        
+        if (mergedPlan.queries && mergedPlan.queries.length > 0 && mergedPlan.analysis_config) {
+          const validateScriptPath = path.join(process.cwd(), "python_src", "execute_analysis_plan.py");
+          const validationResult = await runPythonScript(validateScriptPath, ["validate_plan", JSON.stringify(mergedPlan)]);
+          
+          if (!validationResult.success) {
+            return res.status(400).json({ error: validationResult.error });
+          }
+          
+          if (validationResult.validation && !validationResult.validation.valid) {
+            return res.status(400).json({ 
+              error: "Column validation failed", 
+              validation_errors: validationResult.validation.errors,
+              available_columns: validationResult.available_columns
+            });
+          }
+        }
+      }
+      
+      // Proceed with update if validation passes
+      const scriptPath = path.join(process.cwd(), "python_src", "manage_analysis_plan.py");
+      const result = await runPythonScript(scriptPath, ["update", req.params.planId, JSON.stringify(req.body)]);
+      
+      if (result.success) {
+        res.json(result.plan);
+      } else {
+        res.status(400).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error("Error updating analysis plan:", error);
+      res.status(500).json({ error: "Failed to update analysis plan" });
+    }
+  });
+
+  // Delete analysis plan
+  app.delete("/api/analysis-plans/:planId", async (req, res) => {
+    try {
+      const scriptPath = path.join(process.cwd(), "python_src", "manage_analysis_plan.py");
+      const result = await runPythonScript(scriptPath, ["delete", req.params.planId]);
+      
+      if (result.success) {
+        res.status(204).send();
+      } else {
+        res.status(404).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error("Error deleting analysis plan:", error);
+      res.status(500).json({ error: "Failed to delete analysis plan" });
+    }
+  });
+
+  // Get columns for a specific query (for dropdown population)
+  app.get("/api/queries/:queryId/columns", async (req, res) => {
+    try {
+      const query = await storage.getQueryByQueryId(req.params.queryId);
+      if (!query) {
+        return res.status(404).json({ error: "Query not found" });
+      }
+
+      const scriptPath = path.join(process.cwd(), "python_src", "execute_analysis_plan.py");
+      const result = await runPythonScript(scriptPath, ["get_columns", req.params.queryId]);
+      
+      if (result.success) {
+        res.json({ queryId: req.params.queryId, columns: result.columns });
+      } else {
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error("Error fetching query columns:", error);
+      res.status(500).json({ error: "Failed to fetch query columns" });
+    }
+  });
+
+  // Get columns for joined queries (for dropdown population after join)
+  app.post("/api/analysis-plans/joined-columns", async (req, res) => {
+    try {
+      const { queries } = req.body;
+      
+      if (!queries || !Array.isArray(queries) || queries.length === 0) {
+        return res.status(400).json({ error: "queries array is required" });
+      }
+
+      const scriptPath = path.join(process.cwd(), "python_src", "execute_analysis_plan.py");
+      const result = await runPythonScript(scriptPath, ["get_joined_columns", JSON.stringify(queries)]);
+      
+      if (result.success) {
+        res.json({ columns: result.columns, recordCount: result.record_count, sample: result.sample });
+      } else {
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error("Error fetching joined columns:", error);
+      res.status(500).json({ error: "Failed to fetch joined columns" });
+    }
+  });
+
+  // Validate analysis plan configuration
+  app.post("/api/analysis-plans/validate", async (req, res) => {
+    try {
+      const scriptPath = path.join(process.cwd(), "python_src", "execute_analysis_plan.py");
+      const result = await runPythonScript(scriptPath, ["validate_plan", JSON.stringify(req.body)]);
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(400).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error("Error validating analysis plan:", error);
+      res.status(500).json({ error: "Failed to validate analysis plan" });
+    }
+  });
+
+  // Execute analysis plan
+  app.post("/api/analysis-plans/:planId/execute", async (req, res) => {
+    try {
+      const scriptPath = path.join(process.cwd(), "python_src", "execute_analysis_plan.py");
+      const result = await runPythonScript(scriptPath, ["execute", req.params.planId]);
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error("Error executing analysis plan:", error);
+      res.status(500).json({ error: "Failed to execute analysis plan" });
+    }
+  });
+
+  // Preview analysis plan data (execute queries and join without running analysis)
+  app.post("/api/analysis-plans/:planId/preview", async (req, res) => {
+    try {
+      const scriptPath = path.join(process.cwd(), "python_src", "execute_analysis_plan.py");
+      const result = await runPythonScript(scriptPath, ["preview", req.params.planId]);
+      
+      if (result.success) {
+        res.json(result);
+      } else {
+        res.status(500).json({ error: result.error });
+      }
+    } catch (error) {
+      console.error("Error previewing analysis plan:", error);
+      res.status(500).json({ error: "Failed to preview analysis plan" });
+    }
+  });
+
   return httpServer;
 }

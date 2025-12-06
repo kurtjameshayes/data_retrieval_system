@@ -111,6 +111,48 @@ export interface QueryResult {
   error?: string | null;
 }
 
+export interface QueryConfig {
+  query_id: string;
+  alias?: string;
+  join_column?: string;
+}
+
+export interface AnalysisConfig {
+  basic_statistics?: boolean;
+  exploratory?: boolean;
+  inferential_tests?: Array<{ x: string; y: string; test: string }>;
+  time_series?: { time_column: string; target_column: string; freq?: string };
+  linear_regression?: { features: string[]; target: string; test_size?: number };
+  random_forest?: { features: string[]; target: string; n_estimators?: number; max_depth?: number };
+  multivariate?: { features: string[]; n_components?: number };
+  predictive?: { features: string[]; target: string; model_type: 'linear' | 'forest' };
+}
+
+export interface AnalysisPlan {
+  plan_id: string;
+  plan_name: string;
+  description?: string;
+  queries: QueryConfig[];
+  analysis_config: AnalysisConfig;
+  tags?: string[];
+  active?: boolean;
+  created_at?: string;
+  updated_at?: string;
+  last_run_at?: string | null;
+  last_run_status?: string | null;
+  last_run_error?: string | null;
+}
+
+export interface AnalysisPlanResult {
+  success: boolean;
+  plan_id: string;
+  plan_name: string;
+  record_count: number;
+  columns: string[];
+  analysis: Record<string, any>;
+  data_sample: any[];
+}
+
 // API client functions
 export const api = {
   // Connectors
@@ -224,6 +266,82 @@ export const api = {
   async getLatestQueryResult(id: string): Promise<QueryResult> {
     const res = await fetch(`/api/queries/${id}/results/latest`);
     if (!res.ok) throw new Error('Failed to fetch latest query result');
+    return res.json();
+  },
+
+  async getQueryColumns(queryId: string): Promise<{ queryId: string; columns: string[] }> {
+    const res = await fetch(`/api/queries/${queryId}/columns`);
+    if (!res.ok) throw new Error('Failed to fetch query columns');
+    return res.json();
+  },
+
+  // Analysis Plans
+  async getAnalysisPlans(): Promise<AnalysisPlan[]> {
+    const res = await fetch('/api/analysis-plans');
+    if (!res.ok) throw new Error('Failed to fetch analysis plans');
+    return res.json();
+  },
+
+  async getAnalysisPlan(planId: string): Promise<AnalysisPlan> {
+    const res = await fetch(`/api/analysis-plans/${planId}`);
+    if (!res.ok) throw new Error('Failed to fetch analysis plan');
+    return res.json();
+  },
+
+  async createAnalysisPlan(plan: Omit<AnalysisPlan, 'created_at' | 'updated_at' | 'last_run_at' | 'last_run_status'>): Promise<AnalysisPlan> {
+    const res = await fetch('/api/analysis-plans', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(plan),
+    });
+    if (!res.ok) throw new Error('Failed to create analysis plan');
+    return res.json();
+  },
+
+  async updateAnalysisPlan(planId: string, updates: Partial<AnalysisPlan>): Promise<AnalysisPlan> {
+    const res = await fetch(`/api/analysis-plans/${planId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error('Failed to update analysis plan');
+    return res.json();
+  },
+
+  async deleteAnalysisPlan(planId: string): Promise<void> {
+    const res = await fetch(`/api/analysis-plans/${planId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to delete analysis plan');
+  },
+
+  async getJoinedColumns(queries: QueryConfig[]): Promise<{ columns: string[]; recordCount: number; sample: any[] }> {
+    const res = await fetch('/api/analysis-plans/joined-columns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ queries }),
+    });
+    if (!res.ok) throw new Error('Failed to fetch joined columns');
+    return res.json();
+  },
+
+  async validateAnalysisPlan(plan: Partial<AnalysisPlan>): Promise<{ success: boolean; validation: { valid: boolean; errors: string[] }; available_columns: string[] }> {
+    const res = await fetch('/api/analysis-plans/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(plan),
+    });
+    if (!res.ok) throw new Error('Failed to validate analysis plan');
+    return res.json();
+  },
+
+  async executeAnalysisPlan(planId: string): Promise<AnalysisPlanResult> {
+    const res = await fetch(`/api/analysis-plans/${planId}/execute`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to execute analysis plan');
+    return res.json();
+  },
+
+  async previewAnalysisPlan(planId: string): Promise<{ success: boolean; plan_id: string; columns: string[]; record_count: number; sample: any[] }> {
+    const res = await fetch(`/api/analysis-plans/${planId}/preview`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to preview analysis plan');
     return res.json();
   },
 };

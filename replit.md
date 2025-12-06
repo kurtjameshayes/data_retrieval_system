@@ -41,6 +41,7 @@ Preferred communication style: Simple, everyday language.
 - Real-time query execution with loading states
 - Result visualization and analysis dashboard
 - Responsive layout with persistent sidebar navigation
+- Analysis Plans for configurable multi-query joins and ML-based analysis workflows
 
 ### Backend Architecture (Node.js + Express)
 
@@ -113,8 +114,34 @@ Preferred communication style: Simple, everyday language.
 - Stores connector configurations (connector_configs collection)
 - Caches query results (query_results collection with TTL indexes)
 - Stores reusable queries (stored_queries collection)
+- Stores analysis plans (analysis_plans collection) for multi-query join and ML workflows
 
 **Design Rationale**: MongoDB's flexible schema suits varying connector configurations and query parameters. TTL indexes automatically expire cached results without manual cleanup.
+
+### Analysis Plans System
+
+**Purpose**: Enable configurable multi-query joins and ML-based analysis workflows
+
+**Key Components**:
+- `AnalysisPlan` model (python_src/models/analysis_plan.py): MongoDB model for plan storage
+- `execute_analysis_plan.py`: Executes plans, joins queries, runs DataAnalysisEngine.run_suite()
+- `manage_analysis_plan.py`: CRUD operations for analysis plans
+- `/api/analysis-plans/*` endpoints: REST API with column validation
+- AnalysisPlans.tsx: React UI with dynamic column selection
+
+**Column Validation**: Before saving plans, the system:
+1. Executes the referenced queries to get actual column names
+2. Joins the query outputs to determine available columns after join
+3. Validates that all target/feature columns in analysis_config exist
+4. Returns detailed errors if validation fails
+
+**Analysis Config Options**:
+- `basic_statistics`: Mean, median, correlation matrix
+- `exploratory`: Data types, distributions, missing values
+- `linear_regression`: Features list and target column
+- `random_forest`: Features list, target column, n_estimators
+- `multivariate`: PCA with feature list and n_components
+- `predictive`: Unified interface for linear or forest models
 
 **Dual Database Strategy**
 - PostgreSQL for structured application data (UI-driven queries)
