@@ -12,6 +12,13 @@ class Config:
     CACHE_MAX_DOCUMENT_BYTES = int(
         os.getenv("CACHE_MAX_DOCUMENT_BYTES", 15 * 1024 * 1024)
     )
+    JOINED_QUERY_MAX_DOCUMENT_BYTES = int(
+        os.getenv(
+            "JOINED_QUERY_MAX_DOCUMENT_BYTES",
+            os.getenv("CACHE_MAX_DOCUMENT_BYTES", 15 * 1024 * 1024),
+        )
+    )
+    QUERY_COLUMNS_TTL_SECONDS = int(os.getenv("QUERY_COLUMNS_TTL_SECONDS", 86400))
     API_HOST = os.getenv("API_HOST", "0.0.0.0")
     API_PORT = int(os.getenv("API_PORT", 5000))
     MAX_RETRIES = int(os.getenv("MAX_RETRIES", 3))

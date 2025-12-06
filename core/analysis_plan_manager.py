@@ -7,10 +7,18 @@ delegating to the QueryEngine.
 
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional, Sequence
+
+import pandas as pd
 
 from core.query_engine import QueryEngine
 from models.analysis_plan import AnalysisPlan
+from models.joined_query import JoinedQueryStore
+from models.query_column_cache import QueryColumnCache
+
+logger = logging.getLogger(__name__)
 
 
 class AnalysisPlanManager:
@@ -20,9 +28,13 @@ class AnalysisPlanManager:
         self,
         plan_model: Optional[AnalysisPlan] = None,
         query_engine: Optional[QueryEngine] = None,
+        joined_query_store: Optional[JoinedQueryStore] = None,
+        query_column_cache: Optional[QueryColumnCache] = None,
     ):
         self.plan_model = plan_model or AnalysisPlan()
         self.query_engine = query_engine or QueryEngine()
+        self.joined_query_store = joined_query_store or JoinedQueryStore()
+        self.query_column_cache = query_column_cache or QueryColumnCache()
 
     # -- Persistence helpers -------------------------------------------------
 
@@ -166,7 +178,14 @@ class AnalysisPlanManager:
             use_cache=use_cache,
         )
 
-        return {
+        joined_query_id = self._persist_joined_execution(
+            plan=plan,
+            dataframe=analysis_output.get("dataframe"),
+            query_specs=query_specs,
+            parameter_overrides=runtime_overrides or None,
+        )
+
+        response = {
             "plan": {
                 "plan_id": plan["plan_id"],
                 "plan_name": plan.get("plan_name"),
@@ -180,6 +199,9 @@ class AnalysisPlanManager:
             "dataframe": analysis_output["dataframe"],
             "analysis": analysis_output["analysis"],
         }
+        if joined_query_id:
+            response["joined_query_id"] = joined_query_id
+        return response
 
     def _build_query_specs(
         self,
@@ -231,6 +253,82 @@ class AnalysisPlanManager:
 
         return specs
 
+    def get_query_columns(
+        self,
+        query_ids: Sequence[str],
+        *,
+        force_refresh: bool = False,
+        use_cache: bool = True,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Return column metadata for the provided stored queries, leveraging a cache.
+        """
+        normalized = [str(query_id).strip() for query_id in query_ids if query_id]
+        if not normalized:
+            return {}
+
+        results: Dict[str, Dict[str, Any]] = {}
+        cache_hits: Dict[str, Dict[str, Any]] = {}
+
+        if use_cache and self.query_column_cache:
+            cache_hits = self.query_column_cache.get_many(normalized)
+            for query_id, doc in cache_hits.items():
+                results[query_id] = self._format_cached_columns(doc)
+
+        pending = [qid for qid in normalized if force_refresh or qid not in cache_hits]
+        if not pending:
+            return results
+
+        for query_id in pending:
+            stored_query = self.query_engine.get_stored_query(query_id)
+            if not stored_query:
+                raise ValueError(f"Stored query '{query_id}' was not found.")
+
+            connector_id = stored_query.get("connector_id")
+            if not connector_id:
+                raise ValueError(f"Stored query '{query_id}' is missing connector_id.")
+
+            execution = self.query_engine.execute_query(
+                connector_id,
+                stored_query.get("parameters", {}),
+                use_cache=True,
+                query_id=query_id,
+                processing_context={"stored_query": stored_query},
+            )
+
+            if not execution.get("success"):
+                error = execution.get("error", "unknown error")
+                raise ValueError(f"Unable to load columns for '{query_id}': {error}")
+
+            columns = self._derive_columns_from_result(execution, stored_query)
+            record_count = len(QueryEngine._extract_records(execution))
+            updated_at = datetime.now(UTC).isoformat()
+
+            results[query_id] = {
+                "columns": columns,
+                "source_id": connector_id,
+                "record_count": record_count,
+                "cached": False,
+                "updated_at": updated_at,
+            }
+
+            if self.query_column_cache:
+                try:
+                    self.query_column_cache.save(
+                        query_id=query_id,
+                        columns=columns,
+                        connector_id=connector_id,
+                        record_count=record_count,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    logger.warning(
+                        "Failed to cache column metadata for query '%s': %s",
+                        query_id,
+                        exc,
+                    )
+
+        return results
+
     @staticmethod
     def _merge_rename_maps(
         stored_map: Optional[Dict[str, str]],
@@ -244,3 +342,190 @@ class AnalysisPlanManager:
         if isinstance(override_map, dict):
             merged.update(override_map)
         return merged or None
+
+    @staticmethod
+    def _format_cached_columns(doc: Dict[str, Any]) -> Dict[str, Any]:
+        updated_at = doc.get("updated_at")
+        if isinstance(updated_at, datetime):
+            updated_at = updated_at.isoformat()
+        return {
+            "columns": doc.get("columns", []),
+            "source_id": doc.get("connector_id"),
+            "record_count": doc.get("record_count"),
+            "cached": True,
+            "updated_at": updated_at,
+        }
+
+    def _derive_columns_from_result(
+        self,
+        execution_result: Dict[str, Any],
+        stored_query: Dict[str, Any],
+    ) -> List[str]:
+        payload = execution_result.get("data")
+        records = QueryEngine._extract_records(execution_result)
+
+        if records:
+            dataframe = pd.DataFrame(records)
+        else:
+            dataframe = pd.DataFrame(
+                columns=self._extract_schema_columns(payload),
+            )
+
+        metadata = QueryEngine._extract_metadata(payload)
+        dataframe = QueryEngine._inject_column_aliases(dataframe, metadata)
+
+        rename_map = stored_query.get("rename_columns")
+        if rename_map:
+            dataframe = dataframe.rename(columns=rename_map)
+
+        return [str(column) for column in dataframe.columns]
+
+    @staticmethod
+    def _extract_schema_columns(payload: Any) -> List[str]:
+        if not isinstance(payload, dict):
+            return []
+        schema = payload.get("schema")
+        if not isinstance(schema, dict):
+            return []
+        fields = schema.get("fields")
+        if not isinstance(fields, list):
+            return []
+        columns: List[str] = []
+        for field in fields:
+            if isinstance(field, dict):
+                name = field.get("name")
+                if name:
+                    columns.append(name)
+        return columns
+
+    def _persist_joined_execution(
+        self,
+        *,
+        plan: Dict[str, Any],
+        dataframe: Any,
+        query_specs: List[Dict[str, Any]],
+        parameter_overrides: Optional[Dict[str, Dict[str, Any]]],
+    ) -> Optional[str]:
+        if not self.joined_query_store:
+            return None
+        if not hasattr(dataframe, "to_dict"):
+            return None
+
+        try:
+            document = self._build_joined_query_document(
+                plan=plan,
+                dataframe=dataframe,
+                query_specs=query_specs,
+                parameter_overrides=parameter_overrides,
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning(
+                "Unable to build joined query document for plan '%s': %s",
+                plan.get("plan_id"),
+                exc,
+            )
+            return None
+
+        if not document:
+            return None
+
+        try:
+            return self.joined_query_store.save_execution(document)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning(
+                "Failed to persist joined query document for plan '%s': %s",
+                plan.get("plan_id"),
+                exc,
+            )
+            return None
+
+    def _build_joined_query_document(
+        self,
+        *,
+        plan: Dict[str, Any],
+        dataframe: pd.DataFrame,
+        query_specs: List[Dict[str, Any]],
+        parameter_overrides: Optional[Dict[str, Dict[str, Any]]],
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(dataframe, pd.DataFrame):
+            return None
+
+        records = self._dataframe_to_records(dataframe)
+        if records is None:
+            return None
+
+        join_on = plan.get("join_on") or []
+        query_entries = plan.get("queries", []) or []
+        query_ids = [
+            entry.get("query_id") for entry in query_entries if entry.get("query_id")
+        ]
+        query_aliases = [
+            entry.get("alias") for entry in query_entries if entry.get("alias")
+        ]
+
+        document: Dict[str, Any] = {
+            "plan_id": plan.get("plan_id"),
+            "plan_name": plan.get("plan_name"),
+            "description": plan.get("description"),
+            "query_ids": query_ids,
+            "query_aliases": query_aliases,
+            "join_on": list(join_on),
+            "how": plan.get("how", "inner"),
+            "aggregation": plan.get("aggregation"),
+            "analysis_plan": plan.get("analysis_plan"),
+            "parameter_overrides": parameter_overrides or {},
+            "row_count": len(dataframe),
+            "column_count": len(dataframe.columns),
+            "columns": [str(column) for column in dataframe.columns],
+            "data": records,
+            "executed_at": datetime.now(UTC),
+        }
+
+        if plan.get("tags"):
+            document["tags"] = plan.get("tags")
+
+        query_spec_snapshot: List[Dict[str, Any]] = []
+        for spec in query_specs:
+            snapshot: Dict[str, Any] = {
+                "alias": spec.get("alias"),
+                "source_id": spec.get("source_id"),
+            }
+            if spec.get("parameters"):
+                snapshot["parameters"] = spec.get("parameters")
+            if spec.get("rename_columns"):
+                snapshot["rename_columns"] = spec.get("rename_columns")
+            query_spec_snapshot.append(snapshot)
+
+        if query_spec_snapshot:
+            document["query_specs"] = query_spec_snapshot
+
+        return document
+
+    def _dataframe_to_records(self, dataframe: pd.DataFrame) -> List[Dict[str, Any]]:
+        sanitized = dataframe.copy()
+        sanitized = sanitized.where(pd.notnull(sanitized), None)
+        raw_records = sanitized.to_dict(orient="records")
+
+        return [
+            self._normalize_serializable_value(record) for record in raw_records
+        ]
+
+    def _normalize_serializable_value(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                str(key): self._normalize_serializable_value(sub_value)
+                for key, sub_value in value.items()
+            }
+        if isinstance(value, list):
+            return [self._normalize_serializable_value(item) for item in value]
+        if hasattr(value, "item"):
+            try:
+                return value.item()
+            except Exception:
+                pass
+        if hasattr(value, "isoformat"):
+            try:
+                return value.isoformat()
+            except Exception:
+                pass
+        return value

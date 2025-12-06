@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from core.connector_manager import ConnectorManager
 from core.query_engine import QueryEngine
 from core.cache_manager import CacheManager
+from core.analysis_plan_manager import AnalysisPlanManager
 from models.connector_config import ConnectorConfig
 import logging
 
@@ -14,6 +15,7 @@ config_model = ConnectorConfig()
 connector_manager = ConnectorManager(config_model)
 cache_manager = CacheManager()
 query_engine = QueryEngine(connector_manager, cache_manager)
+analysis_plan_manager = AnalysisPlanManager()
 
 connector_manager.load_connectors()
 
@@ -329,6 +331,31 @@ def search_stored_queries():
     except Exception as e:
         logger.error(f"Error searching stored queries: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/v1/analysis-plans/query-columns', methods=['POST'])
+def get_analysis_plan_query_columns():
+    """Return cached column metadata for the provided stored query IDs."""
+    try:
+        data = request.get_json() or {}
+        query_ids = data.get("query_ids")
+        if not isinstance(query_ids, list) or not query_ids:
+            return jsonify(
+                {"success": False, "error": "query_ids array is required"}
+            ), 400
+
+        force_refresh = bool(data.get("force_refresh", False))
+        columns = analysis_plan_manager.get_query_columns(
+            query_ids,
+            force_refresh=force_refresh,
+        )
+        return jsonify({"success": True, "columns": columns}), 200
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:  # pragma: no cover - surfaced via API response
+        logger.error("Error retrieving query columns: %s", exc)
+        return jsonify({"success": False, "error": "Unable to load query columns"}), 500
+
 
 @app.errorhandler(404)
 def not_found(error):
