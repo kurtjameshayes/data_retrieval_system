@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import argparse
 from pprint import pprint
-from typing import Any, Dict, List, Optional, Sequence
+import sys
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from core.analysis_plan_manager import AnalysisPlanManager
 from core.analysis_plotter import AnalysisPlotter
@@ -17,14 +18,82 @@ SUPPRESSED_ANALYSIS_KEYS = {
     "row_indices",
 }
 
+def _normalize_join_columns(
+    value: Optional[Union[str, Sequence[str]]]
+) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return [cleaned] if cleaned else []
+    if isinstance(value, Sequence):
+        columns: List[str] = []
+        for entry in value:
+            if entry is None:
+                continue
+            if isinstance(entry, str):
+                cleaned = entry.strip()
+                if cleaned:
+                    columns.append(cleaned)
+            else:
+                columns.append(str(entry))
+        return columns
+    return []
+
+def _resolve_join_columns_per_query(
+    query_ids: Sequence[str],
+    default_join_columns: Sequence[str],
+    overrides: Optional[Dict[str, Sequence[str]]] = None,
+) -> List[List[str]]:
+    base_columns = _normalize_join_columns(default_join_columns)
+    overrides = overrides or {}
+    resolved: List[List[str]] = []
+    for query_id in query_ids:
+        override_value = overrides.get(query_id)
+        columns = (
+            list(override_value)
+            if override_value is not None
+            else list(base_columns)
+        )
+        if not columns:
+            raise ValueError(
+                f"Join columns are required for query '{query_id}'. Provide --join-on or --query-join-column."
+            )
+        resolved.append(columns)
+    return resolved
+
+
+def parse_query_join_columns(values: Optional[Sequence[str]]) -> Dict[str, List[str]]:
+    overrides: Dict[str, List[str]] = {}
+    if not values:
+        return overrides
+    for raw in values:
+        if "=" not in raw:
+            raise ValueError(
+                f"Invalid --query-join-column value '{raw}'. Use the format query_id=column_a[,column_b]."
+            )
+        query_id, columns_raw = raw.split("=", 1)
+        columns = [col.strip() for col in columns_raw.split(",") if col.strip()]
+        if not columns:
+            raise ValueError(
+                f"Join column list for query '{query_id}' must include at least one column name."
+            )
+        overrides[query_id.strip()] = columns
+    return overrides
+
 
 def build_query_specs_from_saved_queries(
-    engine: QueryEngine, query_ids: Sequence[str]
+    engine: QueryEngine,
+    query_ids: Sequence[str],
+    join_columns_per_query: Sequence[Sequence[str]],
 ) -> List[dict]:
     """Convert stored query definitions into QueryEngine-friendly specs."""
 
+    if len(query_ids) != len(join_columns_per_query):
+        raise ValueError("join_columns_per_query must align with query_ids.")
+
     specs: List[dict] = []
-    for query_id in query_ids:
+    for idx, query_id in enumerate(query_ids):
         stored_query = engine.get_stored_query(query_id)
         if not stored_query:
             raise ValueError(
@@ -32,12 +101,17 @@ def build_query_specs_from_saved_queries(
                 "Use manage_queries.py or the API to create it first."
             )
 
+        join_columns = list(join_columns_per_query[idx])
+        if not join_columns:
+            raise ValueError(f"Join columns are required for query '{query_id}'.")
+
         spec = {
             "source_id": stored_query["connector_id"],
             "parameters": stored_query.get("parameters", {}),
             "alias": stored_query.get("alias")
             or stored_query.get("query_name")
             or query_id,
+            "join_columns": join_columns,
         }
 
         rename_columns = stored_query.get("rename_columns")
@@ -71,7 +145,7 @@ def build_default_analysis_plan(
 
 def build_analysis(
     query_ids: Sequence[str],
-    join_on: Sequence[str],
+    join_columns_per_query: Sequence[Sequence[str]],
     how: str,
     analysis_plan: Dict[str, Any],
 ):
@@ -79,17 +153,17 @@ def build_analysis(
         raise ValueError("Provide at least two stored query IDs to build a join.")
 
     engine = QueryEngine()
-    query_specs = build_query_specs_from_saved_queries(engine, query_ids)
+    query_specs = build_query_specs_from_saved_queries(
+        engine, query_ids, join_columns_per_query
+    )
 
     dataframe = engine.execute_queries_to_dataframe(
         queries=query_specs,
-        join_on=list(join_on),
         how=how,
     )
 
     analysis_result = engine.analyze_queries(
         queries=query_specs,
-        join_on=list(join_on),
         analysis_plan=analysis_plan,
         how=how,
     )
@@ -104,7 +178,7 @@ def persist_analysis_plan(
     plan_name: Optional[str],
     description: Optional[str],
     query_ids: Sequence[str],
-    join_on: Sequence[str],
+    join_columns_per_query: Sequence[Sequence[str]],
     how: str,
     analysis_plan: Dict[str, Any],
 ) -> str:
@@ -113,7 +187,7 @@ def persist_analysis_plan(
         plan_name=plan_name,
         description=description,
         query_ids=query_ids,
-        join_on=join_on,
+        query_join_columns=join_columns_per_query,
         how=how,
         analysis_plan=analysis_plan,
     )
@@ -195,6 +269,15 @@ def parse_args():
         help="Columns shared across the saved queries used for the join",
     )
     parser.add_argument(
+        "--query-join-column",
+        action="append",
+        dest="query_join_columns",
+        help=(
+            "Override the join column(s) for a specific query. "
+            "Use the format query_id=column_a[,column_b] and repeat as needed."
+        ),
+    )
+    parser.add_argument(
         "--how",
         default="inner",
         choices=["inner", "left", "right", "outer"],
@@ -247,11 +330,18 @@ def parse_args():
 
 def main():
     args = parse_args()
+    try:
+        join_overrides = parse_query_join_columns(args.query_join_columns)
+    except ValueError as exc:
+        print(f"Error parsing --query-join-column: {exc}", file=sys.stderr)
+        return
+
     plan_manager: Optional[AnalysisPlanManager] = None
-    join_keys = list(args.join_on)
+    join_keys: List[str] = []
     target_for_plot = args.target_column
     feature_columns_for_plot = list(args.feature_columns)
     executed_query_ids: List[str] = []
+    join_columns_per_query: Optional[List[List[str]]] = None
 
     if args.analysis_plan_id:
         plan_manager = AnalysisPlanManager()
@@ -261,7 +351,14 @@ def main():
         dataframe = execution["dataframe"]
         analysis = {"analysis": execution["analysis"]}
         plan_meta = execution["plan"]
-        join_keys = plan_meta.get("join_on", join_keys)
+        join_details = plan_meta.get("join_columns") or []
+        if join_details:
+            join_keys = list(join_details[0].get("columns") or [])
+        elif plan_meta.get("queries"):
+            first_query = plan_meta["queries"][0]
+            join_keys = _normalize_join_columns(
+                first_query.get("join_columns") or first_query.get("join_column")
+            )
         plan_analysis_plan = plan_meta.get("analysis_plan")
         target_for_plot = _extract_plan_target(plan_analysis_plan, target_for_plot)
         feature_columns_for_plot = _extract_plan_features(
@@ -277,6 +374,10 @@ def main():
             target_column=args.target_column,
             feature_columns=args.feature_columns,
         )
+        join_columns_per_query = _resolve_join_columns_per_query(
+            args.query_ids, args.join_on, join_overrides
+        )
+        join_keys = list(join_columns_per_query[0])
         (
             engine,
             query_specs,
@@ -284,7 +385,7 @@ def main():
             analysis,
         ) = build_analysis(
             query_ids=args.query_ids,
-            join_on=args.join_on,
+            join_columns_per_query=join_columns_per_query,
             how=args.how,
             analysis_plan=analysis_plan,
         )
@@ -298,7 +399,7 @@ def main():
                 plan_name=args.plan_name,
                 description=args.plan_description,
                 query_ids=executed_query_ids,
-                join_on=args.join_on,
+                join_columns_per_query=join_columns_per_query,
                 how=args.how,
                 analysis_plan=analysis_plan,
             )
@@ -324,7 +425,7 @@ def main():
     try:
         plot_displayed = plotter.plot(
             dataframe=dataframe,
-            join_on=join_keys,
+            label_columns=join_keys,
             target_column=target_for_plot,
             analysis_payload=analysis["analysis"],
             feature_column=feature_columns_for_plot[0]

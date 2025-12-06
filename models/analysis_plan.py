@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pymongo import ASCENDING, MongoClient
 
@@ -32,7 +32,9 @@ class AnalysisPlan:
                 - alias (str, optional)
                 - rename_columns (Dict[str, str], optional)
                 - parameter_overrides (Dict[str, Any], optional)
-        join_on (List[str]): Keys used when joining query results
+                - join_column (Union[str, List[str]], required): Column(s) used to join
+                  this query's results with the rest of the plan
+        join_on (List[str], optional): Legacy shared join key list retained for backward compatibility
         how (str): pandas merge strategy (inner, left, right, outer)
         analysis_plan (Dict[str, Any]): Instructions passed to DataAnalysisEngine
         aggregation (Dict[str, Any], optional): Aggregation configuration
@@ -65,7 +67,7 @@ class AnalysisPlan:
         if not for_update:
             missing = [
                 field
-                for field in ("plan_id", "plan_name", "queries", "join_on", "analysis_plan")
+                for field in ("plan_id", "plan_name", "queries", "analysis_plan")
                 if field not in plan_data
             ]
             if missing:
@@ -78,10 +80,11 @@ class AnalysisPlan:
             for entry in queries:
                 if not isinstance(entry, dict) or "query_id" not in entry:
                     raise ValueError("Each query entry must be a dict with a query_id.")
-
-        if "join_on" in plan_data:
-            if not plan_data["join_on"]:
-                raise ValueError("join_on must contain at least one column.")
+                join_value = entry.get("join_column") or entry.get("join_columns")
+                if join_value is None:
+                    raise ValueError(
+                        f"Query '{entry.get('query_id')}' must include a join_column."
+                    )
 
         if "analysis_plan" in plan_data and not isinstance(plan_data["analysis_plan"], dict):
             raise ValueError("analysis_plan must be a dictionary.")
@@ -108,17 +111,54 @@ class AnalysisPlan:
         raise ValueError("join_on must be a string or sequence of strings.")
 
     @staticmethod
-    def _normalize_queries(queries: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+    def _coerce_join_columns(
+        value: Optional[Union[str, Sequence[str]]]
+    ) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            cleaned = value.strip()
+            return [cleaned] if cleaned else []
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            columns: List[str] = []
+            for entry in value:
+                if entry is None:
+                    continue
+                if isinstance(entry, str):
+                    cleaned = entry.strip()
+                    if cleaned:
+                        columns.append(cleaned)
+                else:
+                    columns.append(str(entry))
+            return columns
+        return []
+
+    @staticmethod
+    def _normalize_join_column(
+        value: Optional[Union[str, Sequence[str]]]
+    ) -> Union[str, List[str]]:
+        columns = AnalysisPlan._coerce_join_columns(value)
+        if not columns:
+            raise ValueError("join_column must contain at least one column name.")
+        return columns[0] if len(columns) == 1 else columns
+
+    @staticmethod
+    def _normalize_queries(
+        queries: Optional[List[Dict[str, Any]]]
+    ) -> Optional[List[Dict[str, Any]]]:
         if queries is None:
             return None
         normalized: List[Dict[str, Any]] = []
         for entry in queries:
+            join_value = entry.get("join_columns") or entry.get("join_column")
+            normalized_join = AnalysisPlan._normalize_join_column(join_value)
             normalized.append(
                 {
                     "query_id": entry["query_id"],
                     "alias": entry.get("alias"),
                     "rename_columns": entry.get("rename_columns"),
                     "parameter_overrides": entry.get("parameter_overrides"),
+                    "join_column": normalized_join,
                 }
             )
         return normalized

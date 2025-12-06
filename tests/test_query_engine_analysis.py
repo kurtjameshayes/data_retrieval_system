@@ -143,10 +143,17 @@ def test_execute_queries_to_dataframe(sample_responses):
     engine = SampleQueryEngine(sample_responses)
     df = engine.execute_queries_to_dataframe(
         queries=[
-            {"source_id": "census_api", "parameters": {}},
-            {"source_id": "usda_quickstats", "parameters": {}},
+            {
+                "source_id": "census_api",
+                "parameters": {},
+                "join_columns": ["state", "year"],
+            },
+            {
+                "source_id": "usda_quickstats",
+                "parameters": {},
+                "join_columns": ["state", "year"],
+            },
         ],
-        join_on=["state", "year"],
         how="inner",
     )
 
@@ -159,10 +166,17 @@ def test_analyze_queries_returns_dataframe_and_analysis(sample_responses):
     engine = SampleQueryEngine(sample_responses)
     result = engine.analyze_queries(
         queries=[
-            {"source_id": "census_api", "parameters": {}},
-            {"source_id": "usda_quickstats", "parameters": {}},
+            {
+                "source_id": "census_api",
+                "parameters": {},
+                "join_columns": ["state", "year"],
+            },
+            {
+                "source_id": "usda_quickstats",
+                "parameters": {},
+                "join_columns": ["state", "year"],
+            },
         ],
-        join_on=["state", "year"],
         analysis_plan={
             "basic_statistics": True,
             "linear_regression": {"features": ["corn_value"], "target": "population"},
@@ -181,10 +195,17 @@ def test_dataframe_uses_friendly_names_when_overrides_present(renamed_responses)
     engine = SampleQueryEngine(renamed_responses)
     df = engine.execute_queries_to_dataframe(
         queries=[
-            {"source_id": "census_api", "parameters": {}},
-            {"source_id": "support_api", "parameters": {}},
+            {
+                "source_id": "census_api",
+                "parameters": {},
+                "join_columns": ["state", "year"],
+            },
+            {
+                "source_id": "support_api",
+                "parameters": {},
+                "join_columns": ["state", "year"],
+            },
         ],
-        join_on=["state", "year"],
     )
 
     columns = set(df.columns)
@@ -197,10 +218,17 @@ def test_analysis_plan_can_reference_friendly_names(renamed_responses):
     engine = SampleQueryEngine(renamed_responses)
     result = engine.analyze_queries(
         queries=[
-            {"source_id": "census_api", "parameters": {}},
-            {"source_id": "support_api", "parameters": {}},
+            {
+                "source_id": "census_api",
+                "parameters": {},
+                "join_columns": ["state", "year"],
+            },
+            {
+                "source_id": "support_api",
+                "parameters": {},
+                "join_columns": ["state", "year"],
+            },
         ],
-        join_on=["state", "year"],
         analysis_plan={
             "linear_regression": {
                 "features": ["Male: No schooling completed"],

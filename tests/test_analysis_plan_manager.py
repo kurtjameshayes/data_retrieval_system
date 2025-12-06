@@ -144,10 +144,9 @@ def test_create_plan_delegates_to_model():
         "plan_id": "plan-one",
         "plan_name": "Plan One",
         "queries": [
-            {"query_id": "q1"},
-            {"query_id": "q2"},
+            {"query_id": "q1", "join_column": "state"},
+            {"query_id": "q2", "join_column": "state"},
         ],
-        "join_on": ["state"],
         "analysis_plan": {"basic_statistics": True},
         "how": "inner",
     }
@@ -166,10 +165,10 @@ def test_execute_plan_builds_query_specs_with_overrides():
                 "query_id": "q1",
                 "alias": "census",
                 "parameter_overrides": {"year": 2020},
+                "join_column": ["state", "year"],
             },
-            {"query_id": "q2"},
+            {"query_id": "q2", "join_column": ["state", "year"]},
         ],
-        "join_on": ["state", "year"],
         "how": "left",
         "analysis_plan": {"basic_statistics": True},
     }
@@ -218,13 +217,15 @@ def test_execute_plan_builds_query_specs_with_overrides():
 
     assert dummy_engine.analyze_calls, "QueryEngine.analyze_queries was not invoked"
     call_kwargs = dummy_engine.analyze_calls[0]
-    assert call_kwargs["join_on"] == ["state", "year"]
+    assert call_kwargs["queries"][0]["join_columns"] == ["state", "year"]
+    assert call_kwargs["queries"][1]["join_columns"] == ["state", "year"]
     assert call_kwargs["analysis_plan"] == {"basic_statistics": True}
     assert result["joined_query_id"] == "joined-doc-id"
     assert store.saved_documents
     saved = store.saved_documents[0]
     assert saved["plan_id"] == "education-vs-income"
     assert saved["row_count"] == len(dummy_engine.dataframe)
+    assert result["plan"]["join_columns"][0]["columns"] == ["state", "year"]
 
 
 def test_add_analyzer_plan_creates_new_plan_when_missing():
@@ -239,7 +240,7 @@ def test_add_analyzer_plan_creates_new_plan_when_missing():
     action = manager.add_analyzer_plan(
         plan_id="zip-analysis",
         query_ids=["education_all_levels_by_zip", "household_all_types_by_zip"],
-        join_on=["zip code tabulation area"],
+        query_join_columns=["zip code tabulation area", "zip code tabulation area"],
         analysis_plan={"basic_statistics": True},
     )
 
@@ -247,7 +248,10 @@ def test_add_analyzer_plan_creates_new_plan_when_missing():
     assert stub_model.plan is not None
     assert stub_model.plan["plan_name"] == "zip-analysis"
     assert len(stub_model.plan["queries"]) == 2
-    assert stub_model.plan["join_on"] == ["zip code tabulation area"]
+    assert all(
+        entry["join_column"] == "zip code tabulation area"
+        for entry in stub_model.plan["queries"]
+    )
 
 
 def test_add_analyzer_plan_updates_existing_plan():
@@ -255,10 +259,9 @@ def test_add_analyzer_plan_updates_existing_plan():
         "plan_id": "zip-analysis",
         "plan_name": "Old Name",
         "queries": [
-            {"query_id": "education_all_levels_by_zip"},
-            {"query_id": "household_all_types_by_zip"},
+            {"query_id": "education_all_levels_by_zip", "join_column": "zip code tabulation area"},
+            {"query_id": "household_all_types_by_zip", "join_column": "zip code tabulation area"},
         ],
-        "join_on": ["zip code tabulation area"],
         "analysis_plan": {"basic_statistics": True},
         "how": "inner",
     }
@@ -275,10 +278,17 @@ def test_add_analyzer_plan_updates_existing_plan():
         plan_name="Updated Name",
         description="New description",
         queries=[
-            {"query_id": "education_all_levels_by_zip", "alias": "education"},
-            {"query_id": "household_all_types_by_zip", "alias": "households"},
+            {
+                "query_id": "education_all_levels_by_zip",
+                "alias": "education",
+                "join_column": "zip code tabulation area",
+            },
+            {
+                "query_id": "household_all_types_by_zip",
+                "alias": "households",
+                "join_column": "zip code tabulation area",
+            },
         ],
-        join_on=["zip code tabulation area"],
         analysis_plan={"basic_statistics": True, "exploratory": True},
         how="left",
         tags=["example"],

@@ -53,12 +53,20 @@ ANALYZER_PLANS = [
             "Compare educational attainment, household composition, and SNAP participation "
             "by ZIP code using the defaults baked into analysis_example.py."
         ),
-        "query_ids": [
-            "education_all_levels_by_zip",
-            "household_all_types_by_zip",
-            "snap_all_attributes_by_zip",
+        "queries": [
+            {
+                "query_id": "education_all_levels_by_zip",
+                "join_column": DEFAULT_JOIN_KEYS[0],
+            },
+            {
+                "query_id": "household_all_types_by_zip",
+                "join_column": DEFAULT_JOIN_KEYS[0],
+            },
+            {
+                "query_id": "snap_all_attributes_by_zip",
+                "join_column": DEFAULT_JOIN_KEYS[0],
+            },
         ],
-        "join_on": list(DEFAULT_JOIN_KEYS),
         "how": "inner",
         "analysis_plan": build_default_analysis_plan(
             target_column=DEFAULT_TARGET_COLUMN,
@@ -73,8 +81,12 @@ def _list_plans(plans: Iterable[dict]) -> None:
     print("Analyzer plans available:\n")
     for plan in plans:
         print(f"- {plan['plan_id']} :: {plan['plan_name']}")
-        print(f"  Queries: {', '.join(plan['query_ids'])}")
-        print(f"  Join on: {', '.join(plan['join_on'])}")
+        query_labels = [entry["query_id"] for entry in plan.get("queries", [])]
+        print(f"  Queries: {', '.join(query_labels)}")
+        print("  Join columns:")
+        for entry in plan.get("queries", []):
+            join_column = entry.get("join_column")
+            print(f"    - {entry.get('query_id')}: {join_column}")
         print(f"  Description: {plan['description']}")
         print()
 
@@ -84,12 +96,18 @@ def _apply_plans(plans: Iterable[dict]) -> None:
     print("Applying analyzer plans...\n")
     for plan in plans:
         try:
+            query_ids = plan.get("query_ids")
+            queries = plan.get("queries")
+            query_join_columns = None
+            if not queries and query_ids and plan.get("join_on"):
+                query_join_columns = [list(plan["join_on"]) for _ in query_ids]
             action = manager.add_analyzer_plan(
                 plan_id=plan["plan_id"],
                 plan_name=plan.get("plan_name"),
                 description=plan.get("description"),
-                query_ids=plan.get("query_ids"),
-                join_on=plan.get("join_on", DEFAULT_JOIN_KEYS),
+                query_ids=query_ids,
+                queries=queries,
+                query_join_columns=query_join_columns,
                 how=plan.get("how", "inner"),
                 analysis_plan=plan["analysis_plan"],
                 aggregation=plan.get("aggregation"),

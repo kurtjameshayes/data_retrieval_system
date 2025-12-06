@@ -165,20 +165,24 @@ joined_df = query_engine.execute_queries_to_dataframe(
         {
             "source_id": "census_api",
             "parameters": {"dataset": "2020/acs/acs5", "get": "NAME,B01003_001E", "for": "state:*"},
-            "alias": "population"
+            "alias": "population",
+            "join_columns": ["state"],
         },
         {
             "source_id": "usda_quickstats",
             "parameters": {"commodity_desc": "CORN", "year": "2020", "format": "JSON"},
-            "alias": "agriculture"
+            "alias": "agriculture",
+            "join_columns": ["state"],
         }
     ],
-    join_on=["state"],
     aggregation={
         "group_by": ["state"],
         "metrics": [{"column": "value", "agg": "sum", "alias": "total_value"}]
     }
 )
+
+Each query lists its own `join_columns`, so connectors with different column names
+can still be merged without a global join key.
 
 analysis_plan = {
     "basic_statistics": True,
@@ -190,10 +194,17 @@ analysis_plan = {
 
 analysis = query_engine.analyze_queries(
     queries=[
-        {"source_id": "census_api", "parameters": {"dataset": "2020/acs/acs5", "get": "NAME,B01003_001E", "for": "state:*"}},
-        {"source_id": "usda_quickstats", "parameters": {"commodity_desc": "CORN", "year": "2020", "format": "JSON"}}
+        {
+            "source_id": "census_api",
+            "parameters": {"dataset": "2020/acs/acs5", "get": "NAME,B01003_001E", "for": "state:*"},
+            "join_columns": ["state"]
+        },
+        {
+            "source_id": "usda_quickstats",
+            "parameters": {"commodity_desc": "CORN", "year": "2020", "format": "JSON"},
+            "join_columns": ["state"]
+        }
     ],
-    join_on=["state"],
     analysis_plan=analysis_plan
 )
 
