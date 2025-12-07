@@ -61,11 +61,6 @@ def preview_joined_data(plan_id: str = None, plan_data: dict = None, limit: int 
             "error": "At least 1 query is required"
         }
     
-    join_columns = []
-    for qc in query_configs:
-        if qc.get("join_column"):
-            join_columns.append(qc["join_column"])
-    
     how = join_type if join_type else plan.get("join_type", "inner")
     if how not in ("inner", "left", "right", "outer"):
         how = "inner"
@@ -89,6 +84,8 @@ def preview_joined_data(plan_id: str = None, plan_data: dict = None, limit: int 
         })
     
     try:
+        import pandas as pd
+        
         if len(queries) == 1:
             result = engine.execute_stored_query(query_configs[0]["query_id"], use_cache=True)
             if not result.get("success"):
@@ -103,19 +100,10 @@ def preview_joined_data(plan_id: str = None, plan_data: dict = None, limit: int 
                     "error": "No data returned from query"
                 }
             
-            import pandas as pd
             df = pd.DataFrame(records)
         else:
-            unique_join_cols = list(set(join_columns)) if join_columns else None
-            if not unique_join_cols:
-                return {
-                    "success": False,
-                    "error": "Join columns are required for multiple queries. Please specify join_column for each query in the plan."
-                }
-            
             df = engine.execute_queries_to_dataframe(
                 queries=queries,
-                join_on=unique_join_cols,
                 how=how
             )
         
@@ -152,45 +140,9 @@ def preview_joined_data(plan_id: str = None, plan_data: dict = None, limit: int 
         }
 
 
-def preview_from_query_ids(query_ids: list, join_on: list, join_type: str = "inner", limit: int = 100):
-    """
-    Execute queries and return joined data preview directly from query IDs.
-    
-    Args:
-        query_ids: List of stored query IDs
-        join_on: List of columns to join on - must match query_ids length exactly
-        join_type: Join type (inner, left, right, outer)
-        limit: Maximum number of rows to return
-        
-    Returns:
-        Dict with joined data preview
-    """
-    if len(join_on) != len(query_ids):
-        return {
-            "success": False,
-            "error": f"join_on must have exactly {len(query_ids)} entries (one per query). Got {len(join_on)}."
-        }
-    
-    queries = []
-    for i, qid in enumerate(query_ids):
-        queries.append({
-            "query_id": qid,
-            "alias": qid,
-            "join_column": join_on[i]
-        })
-    
-    plan_data = {
-        "queries": queries,
-        "join_type": join_type
-    }
-    return preview_joined_data(plan_data=plan_data, limit=limit, join_type=join_type)
-
-
 def main():
     parser = argparse.ArgumentParser(description="Preview joined query data")
     parser.add_argument("--plan-id", "-p", help="Analysis plan ID")
-    parser.add_argument("--query-ids", "-q", help="JSON array of query IDs")
-    parser.add_argument("--join-on", "-j", help="JSON array of join columns")
     parser.add_argument("--join-type", "-t", default="inner",
                         choices=["inner", "left", "right", "outer"],
                         help="Join type")
@@ -201,12 +153,8 @@ def main():
     
     if args.plan_id:
         result = preview_joined_data(plan_id=args.plan_id, limit=args.limit, join_type=args.join_type)
-    elif args.query_ids and args.join_on:
-        query_ids = json.loads(args.query_ids)
-        join_on = json.loads(args.join_on)
-        result = preview_from_query_ids(query_ids, join_on, args.join_type, args.limit)
     else:
-        result = {"success": False, "error": "Either --plan-id or (--query-ids and --join-on) required"}
+        result = {"success": False, "error": "--plan-id is required"}
     
     print(json.dumps(result, indent=2, default=str))
 
