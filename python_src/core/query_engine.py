@@ -75,10 +75,6 @@ class QueryEngine:
                 if should_use_cache:
                     self.cache_manager.set(source_id, parameters, result["data"], query_id=query_id)
                 
-                # Cache column names if query_id is provided
-                if query_id:
-                    self._cache_columns_from_result(query_id, result)
-                
                 result["source"] = "connector"
                 
                 # Add query_id if provided
@@ -149,6 +145,8 @@ class QueryEngine:
             if result.get("success"):
                 result["query_name"] = stored_query.get("query_name")
                 result["query_description"] = stored_query.get("description")
+                # Cache columns for the query
+                self._cache_columns_from_result(query_id, result)
             
             return result
             
@@ -481,11 +479,28 @@ class QueryEngine:
             "available_sources": len(self.connector_manager.list_sources())
         }
     
+    def _extract_records(self, result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Extract records from query result.
+        
+        Args:
+            result: Query result
+            
+        Returns:
+            List of record dicts
+        """
+        data = result.get("data", {})
+        if isinstance(data, dict):
+            records = data.get("data", [])
+            if isinstance(records, list):
+                return records
+        elif isinstance(data, list):
+            return data
+        return []
+    
     def _cache_columns_from_result(self, query_id: str, result: Dict[str, Any]) -> None:
         """
         Extract and cache column names from query result.
-        Collects ALL unique column keys across the entire result set efficiently
-        by only tracking keys (not values) after initial type discovery.
         
         Args:
             query_id: Stored query identifier
@@ -534,18 +549,6 @@ class QueryEngine:
             query_id: Stored query identifier
             
         Returns:
-            Dict with columns info or None if not cached
+            Dict with columns, column_types, row_count or None
         """
         return self.cache_manager.get_query_columns(query_id)
-    
-    def get_cached_columns_for_queries(self, query_ids: List[str]) -> Dict[str, Dict[str, Any]]:
-        """
-        Get cached columns for multiple queries.
-        
-        Args:
-            query_ids: List of stored query identifiers
-            
-        Returns:
-            Dict mapping query_id to column info
-        """
-        return self.cache_manager.get_columns_for_queries(query_ids)

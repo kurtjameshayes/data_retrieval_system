@@ -1,5 +1,5 @@
 import requests
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from core.base_connector import BaseConnector
 import logging
 import time
@@ -14,15 +14,12 @@ class CensusConnector(BaseConnector):
     API Documentation: https://www.census.gov/data/developers/guidance/api-user-guide.html
     """
     
-    _variable_label_cache: Dict[str, Dict[str, str]] = {}
-    
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.base_url = config.get("url", "https://api.census.gov/data")
-        self.api_key = config.get("api_key")
+        self.api_key = config.get("api_key")  # Optional but recommended
         self.max_retries = config.get("max_retries", 3)
         self.retry_delay = config.get("retry_delay", 1)
-        self._current_dataset: Optional[str] = None
     
     def connect(self) -> bool:
         """Establish connection by validating API access."""
@@ -41,6 +38,7 @@ class CensusConnector(BaseConnector):
     def validate(self) -> bool:
         """Validate API access by making a test request."""
         try:
+            # Test with a simple request to the 2020 ACS 5-year data
             test_url = f"{self.base_url}/2020/acs/acs5"
             params = {
                 "get": "NAME",
@@ -74,19 +72,21 @@ class CensusConnector(BaseConnector):
         if not self.connected:
             self.connect()
         
+        # Extract dataset from parameters
         dataset = parameters.get("dataset")
         if not dataset:
             raise ValueError("Dataset parameter is required")
         
-        self._current_dataset = dataset
-        
+        # Build query URL
         query_url = f"{self.base_url}/{dataset}"
         
+        # Build query parameters
         query_params = {k: v for k, v in parameters.items() if k != "dataset"}
         
         if self.api_key:
             query_params["key"] = self.api_key
         
+        # Execute query with retry logic
         for attempt in range(self.max_retries):
             try:
                 response = requests.get(
@@ -97,8 +97,8 @@ class CensusConnector(BaseConnector):
                 
                 if response.status_code == 200:
                     data = response.json()
-                    return self.transform(data, dataset)
-                elif response.status_code == 429:
+                    return self.transform(data)
+                elif response.status_code == 429:  # Rate limit
                     wait_time = self.retry_delay * (2 ** attempt)
                     logger.warning(f"Rate limited. Waiting {wait_time}s before retry...")
                     time.sleep(wait_time)
@@ -120,65 +120,14 @@ class CensusConnector(BaseConnector):
         
         raise Exception("Max retries exceeded")
     
-    def _get_variable_labels(self, dataset: str) -> Dict[str, str]:
+    def transform(self, data: Any) -> Dict[str, Any]:
         """
-        Fetch variable labels from Census API and cache them.
-        
-        The full column header format is: "{concept}: {label}"
-        where concept is the variable group name and label is the specific variable description.
-        
-        Args:
-            dataset: Dataset identifier (e.g., "2022/acs/acs5")
-            
-        Returns:
-            Dict mapping variable codes to their full human-readable labels (concept: label)
-        """
-        if dataset in CensusConnector._variable_label_cache:
-            logger.info(f"Using cached variable labels for {dataset}")
-            return CensusConnector._variable_label_cache[dataset]
-        
-        try:
-            variables_url = f"{self.base_url}/{dataset}/variables.json"
-            logger.info(f"Fetching variable labels from {variables_url}")
-            response = requests.get(variables_url, timeout=15)
-            
-            if response.status_code == 200:
-                variables_data = response.json()
-                variables = variables_data.get("variables", {})
-                
-                label_map = {}
-                for var_code, var_info in variables.items():
-                    if isinstance(var_info, dict):
-                        label = var_info.get("label", var_code)
-                        concept = var_info.get("concept", "")
-                        if concept:
-                            full_label = f"{concept}: {label}"
-                        else:
-                            full_label = label
-                        label_map[var_code] = full_label
-                
-                CensusConnector._variable_label_cache[dataset] = label_map
-                logger.info(f"Cached {len(label_map)} variable labels for {dataset}")
-                return label_map
-            else:
-                logger.warning(f"Failed to fetch variables for {dataset}: {response.status_code}")
-                return {}
-                
-        except Exception as e:
-            logger.warning(f"Error fetching variable labels for {dataset}: {str(e)}")
-            return {}
-    
-    def transform(self, data: Any, dataset: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Transform Census data to standardized format with human-readable column names.
+        Transform Census data to standardized format.
         
         Census API returns data as array of arrays with first row as headers.
-        Variable codes (e.g., B11001_001E) are replaced with their labels from
-        the Census API variables endpoint.
         
         Args:
             data: Raw API response data
-            dataset: Dataset identifier for fetching variable labels
             
         Returns:
             Dict containing standardized data with metadata
@@ -190,19 +139,10 @@ class CensusConnector(BaseConnector):
                 "schema": {"fields": []}
             }
         
-        raw_headers = data[0]
+        # First row contains headers
+        headers = data[0]
         
-        variable_labels = {}
-        if dataset:
-            variable_labels = self._get_variable_labels(dataset)
-        
-        headers = []
-        for header in raw_headers:
-            if header in variable_labels:
-                headers.append(variable_labels[header])
-            else:
-                headers.append(header)
-        
+        # Convert remaining rows to dictionaries
         records = []
         for row in data[1:]:
             record = {}
@@ -210,6 +150,7 @@ class CensusConnector(BaseConnector):
                 record[header] = row[i] if i < len(row) else None
             records.append(record)
         
+        # Create standardized response
         standardized = {
             "metadata": self._create_metadata(len(records), {}),
             "data": records,
@@ -234,7 +175,7 @@ class CensusConnector(BaseConnector):
         for header in headers:
             fields.append({
                 "name": header,
-                "type": "string"
+                "type": "string"  # Census API returns all as strings
             })
         return fields
     
@@ -247,8 +188,7 @@ class CensusConnector(BaseConnector):
             "supports_sorting": False,
             "supports_geography": True,
             "data_formats": ["JSON"],
-            "api_documentation": "https://www.census.gov/data/developers/guidance.html",
-            "supports_variable_labels": True
+            "api_documentation": "https://www.census.gov/data/developers/guidance.html"
         })
         return capabilities
     
@@ -287,15 +227,3 @@ class CensusConnector(BaseConnector):
             logger.error(f"Failed to retrieve variables: {str(e)}")
         
         return {}
-    
-    def clear_variable_cache(self, dataset: Optional[str] = None):
-        """
-        Clear the variable label cache.
-        
-        Args:
-            dataset: Specific dataset to clear, or None to clear all
-        """
-        if dataset:
-            CensusConnector._variable_label_cache.pop(dataset, None)
-        else:
-            CensusConnector._variable_label_cache.clear()
