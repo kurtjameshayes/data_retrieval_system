@@ -28,12 +28,40 @@ class QueryResult:
     
     def _create_indexes(self):
         """Create indexes for efficient querying and TTL."""
-        self.collection.create_index("query_hash", unique=True)
-        self.collection.create_index("source_id")
-        self.collection.create_index(
+        self._ensure_index("query_hash", name="query_hash_1", unique=True)
+        self._ensure_index("source_id", name="source_id_1")
+        self._ensure_index(
             "expires_at",
+            name="expires_at_1",
             expireAfterSeconds=0
         )
+
+    def _ensure_index(self, keys, *, name: str, **options) -> None:
+        """
+        Make sure an index exists with the desired options. If an index with the
+        same name exists but has different options (e.g., sparse vs non-sparse),
+        drop and recreate it to avoid OperationFailure on startup.
+        """
+        if isinstance(keys, str):
+            normalized_keys = [(keys, 1)]
+        else:
+            normalized_keys = list(keys)
+
+        existing_indexes = self.collection.index_information()
+        existing = existing_indexes.get(name)
+
+        if (
+            existing
+            and existing.get("key") == normalized_keys
+            and all(existing.get(opt) == value for opt, value in options.items())
+        ):
+            return
+
+        if existing:
+            logger.info("Rebuilding MongoDB index '%s' to refresh options", name)
+            self.collection.drop_index(name)
+
+        self.collection.create_index(keys, name=name, **options)
     
     def _generate_hash(self, source_id: str, parameters: Dict[str, Any]) -> str:
         """
