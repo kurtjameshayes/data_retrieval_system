@@ -96,14 +96,23 @@ class CensusConnector(BaseConnector):
                 )
                 
                 if response.status_code == 200:
-                    data = response.json()
-                    return self.transform(data)
+                    # Check if response is actually JSON before parsing
+                    content_type = response.headers.get('content-type', '').lower()
+                    if 'application/json' in content_type or response.text.strip().startswith('['):
+                        try:
+                            data = response.json()
+                            return self.transform(data)
+                        except ValueError as je:
+                            raise Exception(f"Invalid JSON response: {str(je)}")
+                    else:
+                        # API returned HTML error page instead of JSON
+                        raise Exception(f"API returned HTML instead of JSON: {response.text[:200]}")
                 elif response.status_code == 429:  # Rate limit
                     wait_time = self.retry_delay * (2 ** attempt)
                     logger.warning(f"Rate limited. Waiting {wait_time}s before retry...")
                     time.sleep(wait_time)
                 else:
-                    raise Exception(f"API error: {response.status_code} - {response.text}")
+                    raise Exception(f"API error: {response.status_code} - {response.text[:200]}")
             
             except requests.exceptions.Timeout:
                 if attempt < self.max_retries - 1:
