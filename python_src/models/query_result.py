@@ -28,7 +28,14 @@ class QueryResult:
     
     def _create_indexes(self):
         """Create indexes for efficient querying and TTL."""
-        self.collection.create_index("query_hash", unique=True)
+        # Drop old non-sparse unique index if it exists
+        try:
+            self.collection.drop_index("query_hash_1")
+            logger.info("Dropped old query_hash index")
+        except Exception as e:
+            logger.debug(f"No old query_hash index to drop: {e}")
+        
+        self.collection.create_index("query_hash", unique=True, sparse=True)
         self.collection.create_index("source_id")
         self.collection.create_index(
             "expires_at",
