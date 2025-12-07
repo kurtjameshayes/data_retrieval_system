@@ -77,11 +77,16 @@ def preview_joined_data(plan_id: str = None, plan_data: dict = None, limit: int 
                 "success": False,
                 "error": f"Stored query not found: {query_id}"
             }
-        queries.append({
+        query_spec = {
             "source_id": sq["connector_id"],
             "parameters": sq["parameters"],
             "alias": qc.get("alias", query_id)
-        })
+        }
+        if qc.get("join_column"):
+            query_spec["join_column"] = qc["join_column"]
+        if qc.get("join_columns"):
+            query_spec["join_columns"] = qc["join_columns"]
+        queries.append(query_spec)
     
     try:
         import pandas as pd
