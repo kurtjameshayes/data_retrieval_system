@@ -312,9 +312,9 @@ export async function registerRoutes(
         ? deepMerge(baseParams, parameterOverrides)
         : baseParams;
 
-      // Execute query via Python QueryEngine.execute_query (same as execute_query.py)
-      const pythonScript = path.join(process.cwd(), "python_src", "execute_query.py");
-      const args = [pythonScript, connector.sourceId, JSON.stringify(mergedParameters)];
+      // Execute query via Python QueryEngine using server wrapper
+      const pythonScript = path.join(process.cwd(), "python_src", "server_execute_query.py");
+      const args = [pythonScript, "--source-id", connector.sourceId, "--params", JSON.stringify(mergedParameters)];
       if (!useCache) {
         args.push("--no-cache");
       }
@@ -539,8 +539,8 @@ export async function registerRoutes(
         return res.status(400).json({ error: "parameters must be an object" });
       }
 
-      const pythonScript = path.join(process.cwd(), "python_src", "execute_query.py");
-      const args = [pythonScript, sourceId, JSON.stringify(parameters)];
+      const pythonScript = path.join(process.cwd(), "python_src", "server_execute_query.py");
+      const args = [pythonScript, "--source-id", sourceId, "--params", JSON.stringify(parameters)];
       if (!useCache) {
         args.push("--no-cache");
       }
