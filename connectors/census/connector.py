@@ -12,6 +12,11 @@ from core.base_connector import BaseConnector
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+class InvalidCensusApiKeyError(Exception):
+    """Raised when the Census API reports that an API key is invalid."""
+    pass
+
 class CensusConnector(BaseConnector):
     """
     Connector for Census.gov API.
@@ -26,6 +31,8 @@ class CensusConnector(BaseConnector):
         self.max_retries = config.get("max_retries", 3)
         self.retry_delay = config.get("retry_delay", 1)
         self._attribute_repository = CensusAttributeNameRepository()
+        self._api_key_valid = bool(self.api_key)
+        self._invalid_key_warned = False
     
     def connect(self) -> bool:
         """Establish connection by validating API access."""
@@ -43,88 +50,130 @@ class CensusConnector(BaseConnector):
     
     def validate(self) -> bool:
         """Validate API access by making a test request."""
+        test_url = f"{self.base_url}/2020/acs/acs5"
+        params = {
+            "get": "NAME",
+            "for": "state:01",
+        }
+        use_key = bool(self.api_key) and self._api_key_valid
+        if use_key:
+            params["key"] = self.api_key
+
         try:
-            # Test with a simple request to the 2020 ACS 5-year data
-            test_url = f"{self.base_url}/2020/acs/acs5"
-            params = {
-                "get": "NAME",
-                "for": "state:01"
-            }
-            
-            if self.api_key:
-                params["key"] = self.api_key
-            
             response = requests.get(test_url, params=params, timeout=10)
-            return response.status_code == 200
-        except Exception as e:
-            logger.error(f"Validation failed: {str(e)}")
+            if response.status_code != 200:
+                logger.error(
+                    "Validation failed with status %s: %s",
+                    response.status_code,
+                    response.text,
+                )
+                return False
+            self._decode_response_payload(
+                response,
+                attempted_with_key=use_key,
+            )
+            return True
+        except InvalidCensusApiKeyError:
+            self._handle_invalid_api_key()
+            params.pop("key", None)
+            try:
+                response = requests.get(test_url, params=params, timeout=10)
+                if response.status_code != 200:
+                    logger.error(
+                        "Validation without API key failed with status %s: %s",
+                        response.status_code,
+                        response.text,
+                    )
+                    return False
+                self._decode_response_payload(
+                    response,
+                    attempted_with_key=False,
+                )
+                return True
+            except Exception as exc:
+                logger.error(f"Validation failed after removing API key: {exc}")
+                return False
+        except Exception as exc:
+            logger.error(f"Validation failed: {exc}")
             return False
     
     def query(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute query against Census.gov API.
-        
-        Args:
-            parameters: Query parameters including:
-                - dataset: Dataset identifier (e.g., "2020/acs/acs5")
-                - get: Variables to retrieve (comma-separated)
-                - for: Geography selection
-                - in: Optional parent geography
-                - additional filters
-                
-        Returns:
-            Dict containing query results and metadata
         """
         if not self.connected:
             self.connect()
-        
-        # Extract dataset from parameters
+
         dataset = parameters.get("dataset")
         if not dataset:
             raise ValueError("Dataset parameter is required")
-        
-        # Build query URL
+
         query_url = f"{self.base_url}/{dataset}"
-        
-        # Build query parameters
         query_params = {k: v for k, v in parameters.items() if k != "dataset"}
-        
-        if self.api_key:
+
+        use_api_key = bool(self.api_key) and self._api_key_valid
+        if use_api_key:
             query_params["key"] = self.api_key
-        
-        # Execute query with retry logic
+
+        last_error: Optional[Exception] = None
         for attempt in range(self.max_retries):
             try:
                 response = requests.get(
                     query_url,
                     params=query_params,
-                    timeout=30
+                    timeout=30,
                 )
-                
+
                 if response.status_code == 200:
-                    data = response.json()
-                    return self.transform(data)
-                elif response.status_code == 429:  # Rate limit
+                    payload = self._decode_response_payload(
+                        response,
+                        attempted_with_key=use_api_key,
+                    )
+                    return self.transform(payload)
+
+                if response.status_code == 429:
                     wait_time = self.retry_delay * (2 ** attempt)
-                    logger.warning(f"Rate limited. Waiting {wait_time}s before retry...")
+                    logger.warning(
+                        "Rate limited. Waiting %ss before retry...",
+                        wait_time,
+                    )
                     time.sleep(wait_time)
-                else:
-                    raise Exception(f"API error: {response.status_code} - {response.text}")
-            
-            except requests.exceptions.Timeout:
+                    continue
+
+                raise Exception(
+                    f"API error: {response.status_code} - {response.text}"
+                )
+
+            except InvalidCensusApiKeyError:
+                if use_api_key:
+                    self._handle_invalid_api_key()
+                    query_params.pop("key", None)
+                    use_api_key = False
+                    continue
+                raise
+            except requests.exceptions.Timeout as exc:
+                last_error = exc
                 if attempt < self.max_retries - 1:
-                    logger.warning(f"Timeout on attempt {attempt + 1}. Retrying...")
+                    logger.warning(
+                        "Timeout on attempt %s. Retrying...",
+                        attempt + 1,
+                    )
                     time.sleep(self.retry_delay * (2 ** attempt))
                 else:
                     raise
-            except Exception as e:
+            except Exception as exc:
+                last_error = exc
                 if attempt < self.max_retries - 1:
-                    logger.warning(f"Error on attempt {attempt + 1}: {str(e)}. Retrying...")
+                    logger.warning(
+                        "Error on attempt %s: %s. Retrying...",
+                        attempt + 1,
+                        str(exc),
+                    )
                     time.sleep(self.retry_delay * (2 ** attempt))
                 else:
                     raise
-        
-        raise Exception("Max retries exceeded")
+
+        raise last_error or Exception("Max retries exceeded")
     
     def transform(self, data: Any) -> Dict[str, Any]:
         """
@@ -184,6 +233,52 @@ class CensusConnector(BaseConnector):
                 "type": "string"  # Census API returns all as strings
             })
         return fields
+
+    def _decode_response_payload(
+        self,
+        response: requests.Response,
+        *,
+        attempted_with_key: bool,
+    ) -> Any:
+        body = response.text or ""
+        stripped = body.lstrip()
+        if attempted_with_key and self._looks_like_invalid_key(body):
+            raise InvalidCensusApiKeyError(
+                "Census API rejected the configured API key."
+            )
+        if not stripped:
+            raise ValueError("Census API returned an empty response body.")
+
+        content_type = (response.headers.get("content-type") or "").lower()
+        looks_json = "json" in content_type or stripped.startswith(("[", "{"))
+
+        if looks_json:
+            try:
+                return response.json()
+            except ValueError as exc:
+                raise ValueError(
+                    f"Unable to parse Census API response as JSON: {exc}"
+                ) from exc
+
+        raise ValueError(
+            "Census API returned unexpected content "
+            f"type '{content_type or 'unknown'}': {body[:200]!r}"
+        )
+
+    @staticmethod
+    def _looks_like_invalid_key(payload: str) -> bool:
+        snippet = payload[:512].lower()
+        return "invalid key" in snippet or "key is not valid" in snippet
+
+    def _handle_invalid_api_key(self) -> None:
+        if not self._api_key_valid:
+            return
+        self._api_key_valid = False
+        if not self._invalid_key_warned:
+            logger.warning(
+                "Census API rejected the configured API key; continuing without it."
+            )
+            self._invalid_key_warned = True
     
     def get_capabilities(self) -> Dict[str, Any]:
         """Get connector capabilities."""
