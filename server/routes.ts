@@ -312,12 +312,12 @@ export async function registerRoutes(
         ? deepMerge(baseParams, parameterOverrides)
         : baseParams;
 
-      // Execute query via Python QueryEngine using server wrapper
-      const pythonScript = path.join(process.cwd(), "python_src", "server_execute_query.py");
-      const args = [pythonScript, "--source-id", connector.sourceId, "--params", JSON.stringify(mergedParameters)];
-      if (!useCache) {
-        args.push("--no-cache");
-      }
+      // Execute stored query using json_execute_query.py
+      const pythonScript = path.join(process.cwd(), "python_src", "json_execute_query.py");
+      const args = [pythonScript, query.queryId];
+        if (!useCache) {
+          args.push("--no-cache");
+        }
 
       const pythonProcess = spawn("python3", args, {
         env: { ...process.env },
@@ -402,8 +402,8 @@ export async function registerRoutes(
           error: `Failed to spawn Python process: ${error.message}`,
         });
 
-        res.status(500).json({ 
-          error: "Failed to execute Python script",
+        res.status(500).json({
+          error: "Failed to execute query",
           query,
           result: queryResult,
         });
@@ -526,21 +526,17 @@ export async function registerRoutes(
     }
   });
 
-  // Execute ad-hoc query via Python QueryEngine
+  // Execute stored query by queryId via Python QueryEngine
   app.post("/api/execute", async (req, res) => {
     try {
-      const { sourceId, parameters, useCache = true } = req.body;
+      const { queryId, useCache = true } = req.body;
 
-      if (!sourceId) {
-        return res.status(400).json({ error: "sourceId is required" });
+      if (!queryId) {
+        return res.status(400).json({ error: "queryId is required" });
       }
 
-      if (!parameters || typeof parameters !== "object") {
-        return res.status(400).json({ error: "parameters must be an object" });
-      }
-
-      const pythonScript = path.join(process.cwd(), "python_src", "server_execute_query.py");
-      const args = [pythonScript, "--source-id", sourceId, "--params", JSON.stringify(parameters)];
+      const pythonScript = path.join(process.cwd(), "python_src", "json_execute_query.py");
+      const args = [pythonScript, queryId];
       if (!useCache) {
         args.push("--no-cache");
       }
