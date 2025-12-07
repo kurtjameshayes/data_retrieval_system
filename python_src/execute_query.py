@@ -1,71 +1,63 @@
 #!/usr/bin/env python3
-"""
-Wrapper script to execute ad-hoc queries (not stored queries) via Python.
-This script is invoked by the Node.js backend via subprocess.
-"""
-import sys
+"""Execute a stored query by ID and display its first rows."""
+
+from __future__ import annotations
+
+import argparse
 import os
-import json
-import logging
+import sys
+from typing import Sequence
 
-os.environ["MONGO_URI"] = os.environ.get("MONGODB_URI", "")
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from core.query_engine import QueryEngine
-
-logging.basicConfig(level=logging.WARNING)
-logger = logging.getLogger(__name__)
+from run_query import DEFAULT_DISPLAY_ROWS, extract_records, render_table
 
 
-def main():
-    if len(sys.argv) < 3:
-        result = {
-            "success": False,
-            "error": "Usage: execute_query.py <source_id> <parameters_json> [--no-cache]"
-        }
-        print(json.dumps(result))
-        sys.exit(1)
-    
-    source_id = sys.argv[1]
-    
-    try:
-        parameters = json.loads(sys.argv[2])
-    except json.JSONDecodeError as e:
-        result = {
-            "success": False,
-            "error": f"Invalid parameters JSON: {str(e)}"
-        }
-        print(json.dumps(result))
-        sys.exit(1)
-    
-    use_cache = "--no-cache" not in sys.argv
-    
-    try:
-        engine = QueryEngine()
-        result = engine.execute_query(
-            source_id=source_id,
-            parameters=parameters,
-            use_cache=use_cache
-        )
-        
-        if "data" in result and isinstance(result["data"], dict):
-            data = result["data"]
-            if "data" in data and isinstance(data["data"], list):
-                result["record_count"] = len(data["data"])
-        
-        print(json.dumps(result, default=str))
-        
-    except Exception as e:
-        logger.error(f"Query execution error: {str(e)}")
-        result = {
-            "success": False,
-            "error": str(e),
-            "source_id": source_id
-        }
-        print(json.dumps(result))
-        sys.exit(1)
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Configure and parse CLI arguments."""
+    parser = argparse.ArgumentParser(
+        description="Execute a stored query via QueryEngine and show the first rows."
+    )
+    parser.add_argument(
+        "query_id",
+        help="ID of the stored query to execute.",
+    )
+    parser.add_argument(
+        "--rows",
+        type=int,
+        default=DEFAULT_DISPLAY_ROWS,
+        help=f"Number of rows to display (default: {DEFAULT_DISPLAY_ROWS}).",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+
+    engine = QueryEngine()
+    result = engine.execute_stored_query(args.query_id)
+
+    if not result.get("success"):
+        error_message = result.get("error", "Unknown error")
+        print(f"Query failed: {error_message}", file=sys.stderr)
+        return 1
+
+    payload = result.get("data")
+    records = extract_records(payload)
+
+    print(f"Query ID      : {args.query_id}")
+    print(f"Query Name    : {result.get('query_name') or 'N/A'}")
+    print(f"Cache Result  : {result.get('source', 'unknown')}")
+    print(f"Rows Returned : {len(records)}")
+
+    print("\nFirst rows:")
+    print(render_table(records, args.rows))
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

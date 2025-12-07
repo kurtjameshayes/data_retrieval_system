@@ -1,5 +1,6 @@
 from typing import Dict, Any, List, Optional, Union
 import logging
+import re
 
 import pandas as pd
 
@@ -10,6 +11,8 @@ from models.stored_query import StoredQuery
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+DYNAMIC_PLACEHOLDER_PATTERN = re.compile(r"^\{([A-Za-z0-9_\-]+)\}$")
 
 class QueryEngine:
     """
@@ -36,7 +39,8 @@ class QueryEngine:
         self.use_cache = True
     
     def execute_query(self, source_id: str, parameters: Dict[str, Any], 
-                     use_cache: bool = None, query_id: str = None) -> Dict[str, Any]:
+                     use_cache: bool = None, query_id: str = None,
+                     processing_context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Execute a query against a data source.
         
@@ -45,6 +49,8 @@ class QueryEngine:
             parameters: Query parameters
             use_cache: Override default cache behavior
             query_id: Optional reference to stored query
+            processing_context: Optional connector-specific context for
+                post-processing hooks
             
         Returns:
             Dict containing query results
@@ -52,14 +58,19 @@ class QueryEngine:
         # Determine if cache should be used
         should_use_cache = use_cache if use_cache is not None else self.use_cache
         
+        context = self._build_processing_context(parameters, processing_context, query_id)
+        
         # Try to get from cache first
         if should_use_cache:
             cached_result = self.cache_manager.get(source_id, parameters)
             if cached_result:
+                processed_cache = self._apply_connector_processing(
+                    source_id, cached_result, context
+                )
                 result = {
                     "success": True,
                     "source": "cache",
-                    "data": cached_result
+                    "data": processed_cache
                 }
                 # Add query_id if provided
                 if query_id:
@@ -71,6 +82,12 @@ class QueryEngine:
             result = self.connector_manager.query(source_id, parameters)
             
             if result.get("success"):
+                processed_payload = self._apply_connector_processing(
+                    source_id, result.get("data"), context
+                )
+                if processed_payload is not None:
+                    result["data"] = processed_payload
+                
                 # Cache the result with query_id if provided
                 if should_use_cache:
                     self.cache_manager.set(source_id, parameters, result["data"], query_id=query_id)
@@ -133,20 +150,45 @@ class QueryEngine:
             # Get connector_id and parameters
             connector_id = stored_query["connector_id"]
             parameters = stored_query["parameters"].copy()
+            dynamic_placeholders = self._identify_dynamic_parameters(parameters)
+            token_to_params = self._map_tokens_to_parameters(dynamic_placeholders)
+            resolved_parameters = parameters.copy()
             
-            # Apply parameter overrides if provided
+            # Apply parameter overrides if provided (supports placeholder tokens)
             if parameter_overrides:
-                parameters.update(parameter_overrides)
+                for key, value in parameter_overrides.items():
+                    if key in resolved_parameters:
+                        resolved_parameters[key] = value
+                    elif key in token_to_params:
+                        for param_name in token_to_params[key]:
+                            resolved_parameters[param_name] = value
+                    else:
+                        resolved_parameters[key] = value
+            
+            missing_dynamic = self._find_missing_dynamic_parameters(
+                resolved_parameters, dynamic_placeholders
+            )
+            if missing_dynamic:
+                return {
+                    "success": False,
+                    "error": self._format_missing_dynamic_error(missing_dynamic),
+                    "query_id": query_id
+                }
             
             # Execute the query with query_id reference
-            result = self.execute_query(connector_id, parameters, use_cache, query_id=query_id)
+            processing_context = {"stored_query": stored_query}
+            result = self.execute_query(
+                connector_id,
+                resolved_parameters,
+                use_cache,
+                query_id=query_id,
+                processing_context=processing_context
+            )
             
             # Add stored query metadata to result
             if result.get("success"):
                 result["query_name"] = stored_query.get("query_name")
                 result["query_description"] = stored_query.get("description")
-                # Cache columns for the query
-                self._cache_columns_from_result(query_id, result)
             
             return result
             
@@ -338,8 +380,11 @@ class QueryEngine:
             if not result.get("success"):
                 raise ValueError(f"Query failed for {source_id}: {result.get('error')}")
 
+            payload = result.get("data")
+            metadata = self._extract_metadata(payload)
             records = self._extract_records(result)
             df = pd.DataFrame(records)
+            df = self._inject_column_aliases(df, metadata)
 
             if rename_map:
                 df = df.rename(columns=rename_map)
@@ -402,6 +447,40 @@ class QueryEngine:
         else:
             data = payload
         return data or []
+
+    @staticmethod
+    def _extract_metadata(payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return None
+        metadata = payload.get("metadata")
+        return metadata if isinstance(metadata, dict) else None
+
+    @staticmethod
+    def _inject_column_aliases(
+        df: pd.DataFrame,
+        metadata: Optional[Dict[str, Any]],
+    ) -> pd.DataFrame:
+        if not isinstance(metadata, dict):
+            return df
+
+        overrides = metadata.get("column_name_overrides")
+        if not isinstance(overrides, dict):
+            return df
+
+        rename_map = {}
+        for original, friendly in overrides.items():
+            if (
+                isinstance(original, str)
+                and isinstance(friendly, str)
+                and original in df.columns
+                and friendly not in df.columns
+            ):
+                rename_map[original] = friendly
+
+        if rename_map:
+            df = df.rename(columns=rename_map)
+
+        return df
 
     @staticmethod
     def _apply_aggregation(df: pd.DataFrame, aggregation: Dict[str, Any]) -> pd.DataFrame:
@@ -478,77 +557,84 @@ class QueryEngine:
             "cache_stats": self.cache_manager.get_stats(),
             "available_sources": len(self.connector_manager.list_sources())
         }
+
+    @staticmethod
+    def _extract_placeholder_token(value: Any) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        match = DYNAMIC_PLACEHOLDER_PATTERN.match(value.strip())
+        if match:
+            return match.group(1)
+        return None
+
+    def _identify_dynamic_parameters(self, parameters: Dict[str, Any]) -> Dict[str, str]:
+        dynamic: Dict[str, str] = {}
+        for key, value in parameters.items():
+            token = self._extract_placeholder_token(value)
+            if token:
+                dynamic[key] = token
+        return dynamic
+
+    @staticmethod
+    def _map_tokens_to_parameters(dynamic_placeholders: Dict[str, str]) -> Dict[str, List[str]]:
+        mapping: Dict[str, List[str]] = {}
+        for param, token in dynamic_placeholders.items():
+            mapping.setdefault(token, []).append(param)
+        return mapping
+
+    def _find_missing_dynamic_parameters(
+        self,
+        parameters: Dict[str, Any],
+        dynamic_placeholders: Dict[str, str]
+    ) -> List[Dict[str, str]]:
+        missing: List[Dict[str, str]] = []
+        for param, token in dynamic_placeholders.items():
+            value = parameters.get(param)
+            if self._extract_placeholder_token(value):
+                missing.append({"parameter": param, "token": token})
+        return missing
+
+    @staticmethod
+    def _format_missing_dynamic_error(missing: List[Dict[str, str]]) -> str:
+        details = ", ".join(
+            f"{item['parameter']} (placeholder '{item['token']}')" for item in missing
+        )
+        return f"Missing dynamic parameter values: {details}"
     
-    def _extract_records(self, result: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Extract records from query result.
-        
-        Args:
-            result: Query result
-            
-        Returns:
-            List of record dicts
-        """
-        data = result.get("data", {})
-        if isinstance(data, dict):
-            records = data.get("data", [])
-            if isinstance(records, list):
-                return records
-        elif isinstance(data, list):
-            return data
-        return []
+    def _build_processing_context(
+        self,
+        parameters: Dict[str, Any],
+        extra_context: Optional[Dict[str, Any]],
+        query_id: Optional[str],
+    ) -> Dict[str, Any]:
+        context: Dict[str, Any] = {}
+        if parameters is not None:
+            context["parameters"] = parameters.copy()
+        if query_id:
+            context["query_id"] = query_id
+        if extra_context:
+            context.update(extra_context)
+        return context
     
-    def _cache_columns_from_result(self, query_id: str, result: Dict[str, Any]) -> None:
-        """
-        Extract and cache column names from query result.
+    def _apply_connector_processing(
+        self,
+        source_id: str,
+        payload: Optional[Dict[str, Any]],
+        context: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        if not payload:
+            return payload
         
-        Args:
-            query_id: Stored query identifier
-            result: Query result containing data
-        """
+        connector = self.connector_manager.get_connector(source_id)
+        if not connector:
+            return payload
+        
         try:
-            records = self._extract_records(result)
-            if not records:
-                return
-            
-            row_count = len(records)
-            all_columns = set()
-            column_types = {}
-            
-            for record in records:
-                new_keys = set(record.keys()) - all_columns
-                if new_keys:
-                    for col in new_keys:
-                        val = record.get(col)
-                        column_types[col] = type(val).__name__ if val is not None else "NoneType"
-                    all_columns.update(new_keys)
-                else:
-                    for col in record.keys():
-                        if column_types.get(col) == "NoneType":
-                            val = record.get(col)
-                            if val is not None:
-                                column_types[col] = type(val).__name__
-            
-            columns = sorted(list(all_columns))
-            
-            self.cache_manager.cache_query_columns(
-                query_id=query_id,
-                columns=columns,
-                column_types=column_types,
-                row_count=row_count
+            return connector.process_query_result(payload, context)
+        except Exception as exc:
+            logger.warning(
+                "Post-processing failed for %s: %s",
+                source_id,
+                str(exc),
             )
-            logger.info(f"Cached {len(columns)} columns for query {query_id} from {row_count} records")
-        except Exception as e:
-            logger.warning(f"Failed to cache columns for query {query_id}: {str(e)}")
-    
-    def get_cached_columns(self, query_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get cached column names for a query.
-        
-        Args:
-            query_id: Stored query identifier
-            
-        Returns:
-            Dict with columns, column_types, row_count or None
-        """
-        return self.cache_manager.get_query_columns(query_id)
+            return payload

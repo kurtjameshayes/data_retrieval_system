@@ -1,301 +1,189 @@
 #!/usr/bin/env python3
-"""
-Wrapper script to execute analysis plans via Python.
-This script is invoked by the Node.js backend via subprocess.
+"""Command-line helper to execute a stored analysis plan."""
 
-An analysis plan can reference multiple queries, join their results,
-and run configurable analysis using DataAnalysisEngine.run_suite().
-"""
-import sys
-import os
+from __future__ import annotations
+
+import argparse
 import json
-import logging
-import math
+import sys
+from pathlib import Path
+from typing import Any, Dict, Optional
 
-os.environ["MONGO_URI"] = os.environ.get("MONGODB_URI", "")
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-import pandas as pd
-import numpy as np
-from models.analysis_plan import AnalysisPlan
-from core.query_engine import QueryEngine
-from core.data_analysis import DataAnalysisEngine
-
-logging.basicConfig(level=logging.WARNING)
-logger = logging.getLogger(__name__)
+from core.analysis_plan_manager import AnalysisPlanManager
 
 
-def clean_for_json(obj):
-    """Recursively clean an object for JSON serialization by replacing NaN/Inf with None."""
-    if isinstance(obj, dict):
-        return {k: clean_for_json(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [clean_for_json(item) for item in obj]
-    elif isinstance(obj, float):
-        if math.isnan(obj) or math.isinf(obj):
-            return None
-        return obj
-    elif isinstance(obj, (np.floating, np.integer)):
-        if np.isnan(obj) or np.isinf(obj):
-            return None
-        return float(obj) if isinstance(obj, np.floating) else int(obj)
-    elif pd.isna(obj):
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Execute a stored analysis plan by ID and optionally apply runtime "
+            "parameter overrides."
+        )
+    )
+    parser.add_argument(
+        "--plan-id",
+        required=True,
+        help="Identifier of the persisted analysis plan to execute.",
+    )
+    parser.add_argument(
+        "--parameter-overrides",
+        help=(
+            "JSON string mapping query_id -> overrides. "
+            'Example: \'{"query_alpha": {"year": "2023"}}\''
+        ),
+    )
+    parser.add_argument(
+        "--overrides-file",
+        help="Path to a JSON file containing the parameter overrides payload.",
+    )
+    parser.add_argument(
+        "--use-cache",
+        dest="use_cache",
+        action="store_true",
+        help="Force-enable the query result cache for this run.",
+    )
+    parser.add_argument(
+        "--no-cache",
+        dest="use_cache",
+        action="store_false",
+        help="Disable the query result cache for this run.",
+    )
+    parser.set_defaults(use_cache=None)
+    parser.add_argument(
+        "--sample-rows",
+        type=int,
+        default=5,
+        help="Number of joined rows to display after execution (default: 5).",
+    )
+    parser.add_argument(
+        "--output-json",
+        help=(
+            "Optional path to write the full execution payload (plan metadata, "
+            "query specs, dataframe rows, analysis outputs) as JSON."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def _load_parameter_overrides(
+    overrides_json: Optional[str], overrides_file: Optional[str]
+) -> Optional[Dict[str, Dict[str, Any]]]:
+    payload: Optional[str] = None
+    if overrides_json:
+        payload = overrides_json
+    elif overrides_file:
+        payload = Path(overrides_file).read_text(encoding="utf-8")
+
+    if payload is None:
         return None
-    return obj
 
-
-def execute_queries_and_join(engine: QueryEngine, queries_config: list) -> pd.DataFrame:
-    """
-    Execute multiple queries and join their results.
-    
-    Args:
-        engine: QueryEngine instance
-        queries_config: List of query configurations with query_id, alias, join_column
-        
-    Returns:
-        Joined DataFrame
-    """
-    if not queries_config:
-        raise ValueError("No queries specified in plan")
-    
-    dataframes = {}
-    
-    for i, query_cfg in enumerate(queries_config):
-        query_id = query_cfg.get('query_id')
-        alias = query_cfg.get('alias', f'query_{i}')
-        
-        if not query_id:
-            raise ValueError(f"Query config at index {i} missing query_id")
-        
-        result = engine.execute_stored_query(query_id, use_cache=True)
-        
-        if not result.get('success'):
-            raise ValueError(f"Query {query_id} failed: {result.get('error', 'Unknown error')}")
-        
-        data = result.get('data', {})
-        records = data.get('data', []) if isinstance(data, dict) else data
-        
-        if not records:
-            raise ValueError(f"Query {query_id} returned no data")
-        
-        df = pd.DataFrame(records)
-        dataframes[alias] = {
-            'df': df,
-            'join_column': query_cfg.get('join_column'),
-            'config': query_cfg
-        }
-    
-    if len(dataframes) == 1:
-        return list(dataframes.values())[0]['df']
-    
-    aliases = list(dataframes.keys())
-    result_df = dataframes[aliases[0]]['df']
-    
-    for alias in aliases[1:]:
-        df_info = dataframes[alias]
-        join_col = df_info['join_column']
-        
-        if not join_col:
-            result_df = pd.concat([result_df, df_info['df']], axis=1)
-        else:
-            left_join_col = dataframes[aliases[0]]['join_column'] or join_col
-            if left_join_col not in result_df.columns:
-                if join_col in result_df.columns:
-                    left_join_col = join_col
-                else:
-                    for col in result_df.columns:
-                        if col.lower() == join_col.lower():
-                            left_join_col = col
-                            break
-            
-            if left_join_col not in result_df.columns:
-                result_df = pd.concat([result_df, df_info['df']], axis=1)
-            elif join_col not in df_info['df'].columns:
-                result_df = pd.concat([result_df, df_info['df']], axis=1)
-            else:
-                result_df = result_df.merge(
-                    df_info['df'],
-                    left_on=left_join_col,
-                    right_on=join_col,
-                    how='outer',
-                    suffixes=('', f'_{alias}')
-                )
-    
-    return result_df
-
-
-def get_query_columns(engine: QueryEngine, query_id: str) -> list:
-    """
-    Execute a query and return its column names.
-    
-    Args:
-        engine: QueryEngine instance
-        query_id: Stored query ID
-        
-    Returns:
-        List of column names
-    """
-    result = engine.execute_stored_query(query_id, use_cache=True)
-    
-    if not result.get('success'):
-        raise ValueError(f"Query {query_id} failed: {result.get('error', 'Unknown error')}")
-    
-    data = result.get('data', {})
-    records = data.get('data', []) if isinstance(data, dict) else data
-    
-    if not records:
-        schema = data.get('schema', {})
-        fields = schema.get('fields', [])
-        if fields:
-            return [f.get('name') for f in fields if f.get('name')]
-        return []
-    
-    return list(records[0].keys())
-
-
-def main():
-    if len(sys.argv) < 2:
-        result = {
-            "success": False,
-            "error": "Usage: execute_analysis_plan.py <action> [args...]"
-        }
-        print(json.dumps(result))
-        sys.exit(1)
-    
-    action = sys.argv[1]
-    
     try:
-        plan_model = AnalysisPlan()
-        engine = QueryEngine()
-        analysis_engine = DataAnalysisEngine()
-        
-        if action == "execute":
-            if len(sys.argv) < 3:
-                raise ValueError("plan_id required for execute action")
-            
-            plan_id = sys.argv[2]
-            plan = plan_model.get_by_id(plan_id)
-            
-            if not plan:
-                raise ValueError(f"Plan not found: {plan_id}")
-            
-            df = execute_queries_and_join(engine, plan.get('queries', []))
-            
-            analysis_config = plan.get('analysis_plan', {})
-            
-            if not analysis_config:
-                analysis_results = {
-                    "basic_statistics": analysis_engine.basic_statistics(df),
-                    "exploratory_analysis": analysis_engine.exploratory_analysis(df)
-                }
-            else:
-                analysis_results = analysis_engine.run_suite(df, analysis_config)
-            
-            plan_model.update_run_status(plan_id, 'success')
-            
-            result = {
-                "success": True,
-                "plan_id": plan_id,
-                "plan_name": plan.get('plan_name'),
-                "record_count": len(df),
-                "columns": list(df.columns),
-                "analysis": analysis_results,
-                "data_sample": df.head(20).to_dict(orient='records')
-            }
-            
-        elif action == "get_columns":
-            if len(sys.argv) < 3:
-                raise ValueError("query_id required for get_columns action")
-            
-            query_id = sys.argv[2]
-            columns = get_query_columns(engine, query_id)
-            
-            result = {
-                "success": True,
-                "query_id": query_id,
-                "columns": columns
-            }
-            
-        elif action == "get_joined_columns":
-            if len(sys.argv) < 3:
-                raise ValueError("queries_config JSON required for get_joined_columns action")
-            
-            queries_config = json.loads(sys.argv[2])
-            df = execute_queries_and_join(engine, queries_config)
-            
-            result = {
-                "success": True,
-                "columns": list(df.columns),
-                "record_count": len(df),
-                "sample": df.head(5).to_dict(orient='records')
-            }
-            
-        elif action == "preview":
-            if len(sys.argv) < 3:
-                raise ValueError("plan_id required for preview action")
-            
-            plan_id = sys.argv[2]
-            plan = plan_model.get_by_id(plan_id)
-            
-            if not plan:
-                raise ValueError(f"Plan not found: {plan_id}")
-            
-            df = execute_queries_and_join(engine, plan.get('queries', []))
-            
-            result = {
-                "success": True,
-                "plan_id": plan_id,
-                "columns": list(df.columns),
-                "record_count": len(df),
-                "sample": df.head(20).to_dict(orient='records')
-            }
-            
-        elif action == "validate_plan":
-            if len(sys.argv) < 3:
-                raise ValueError("plan_data JSON required for validate_plan action")
-            
-            plan_data = json.loads(sys.argv[2])
-            queries_config = plan_data.get('queries', [])
-            
-            if queries_config:
-                df = execute_queries_and_join(engine, queries_config)
-                available_columns = list(df.columns)
-            else:
-                available_columns = []
-            
-            validation = plan_model.validate_columns(plan_data, available_columns)
-            
-            result = {
-                "success": True,
-                "validation": validation,
-                "available_columns": available_columns
-            }
-            
+        parsed = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON for parameter overrides: {exc}") from exc
+
+    if not isinstance(parsed, dict):
+        raise ValueError("Parameter overrides must be a JSON object.")
+
+    sanitized: Dict[str, Dict[str, Any]] = {}
+    for query_id, overrides in parsed.items():
+        if not isinstance(overrides, dict):
+            raise ValueError(
+                f"Overrides for query '{query_id}' must be a JSON object."
+            )
+        sanitized[str(query_id)] = overrides
+    return sanitized or None
+
+
+def _json_default(value: Any) -> str:
+    """Best-effort serializer for numpy/pandas objects."""
+    return str(value)
+
+
+def _print_summary(
+    *,
+    plan_id: str,
+    execution: Dict[str, Any],
+    sample_rows: int,
+) -> None:
+    plan_meta = execution["plan"]
+    query_specs = execution["query_specs"]
+    dataframe = execution["dataframe"]
+    analysis = execution["analysis"]
+
+    print(f"Analysis plan '{plan_id}' executed successfully.\n")
+    print("Plan metadata:")
+    print(f"  Name: {plan_meta.get('plan_name') or plan_meta.get('plan_id')}")
+    print(f"  Description: {plan_meta.get('description') or '-'}")
+    print(f"  Join keys: {', '.join(plan_meta.get('join_on', []))}")
+    print(f"  Join type: {plan_meta.get('how', 'inner')}")
+
+    print(f"\nResolved query specs ({len(query_specs)}):")
+    for spec in query_specs:
+        alias = spec.get("alias") or "<unnamed>"
+        print(f"  - {alias} -> {spec.get('source_id')}")
+
+    if hasattr(dataframe, "shape"):
+        rows, cols = dataframe.shape
+        print(f"\nDataframe shape: {rows} rows x {cols} columns")
+        if sample_rows > 0:
+            print(f"\nSample ({min(sample_rows, rows)} rows):")
+            print(dataframe.head(sample_rows).to_string(index=False))
+
+    if isinstance(analysis, dict):
+        print("\nAnalysis sections:")
+        if analysis:
+            for key in sorted(analysis.keys()):
+                print(f"  - {key}")
         else:
-            result = {"success": False, "error": f"Unknown action: {action}"}
-        
-        cleaned_result = clean_for_json(result)
-        print(json.dumps(cleaned_result, default=str))
-        
-    except json.JSONDecodeError as e:
-        result = {"success": False, "error": f"Invalid JSON: {str(e)}"}
-        print(json.dumps(result))
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"Error: {str(e)}")
-        
-        if len(sys.argv) >= 3 and sys.argv[1] == "execute":
-            try:
-                plan_model = AnalysisPlan()
-                plan_model.update_run_status(sys.argv[2], 'error', str(e))
-            except:
-                pass
-        
-        result = {"success": False, "error": str(e)}
-        print(json.dumps(result))
-        sys.exit(1)
+            print("  (none)")
 
 
-if __name__ == "__main__":
-    main()
+def _write_output_json(path: str, execution: Dict[str, Any]) -> None:
+    dataframe = execution["dataframe"]
+    dataframe_payload: Optional[list[Dict[str, Any]]] = None
+    if hasattr(dataframe, "to_dict"):
+        dataframe_payload = dataframe.to_dict(orient="records")
+
+    serializable = {
+        "plan": execution["plan"],
+        "query_specs": execution["query_specs"],
+        "dataframe": dataframe_payload,
+        "analysis": execution["analysis"],
+    }
+    Path(path).write_text(
+        json.dumps(serializable, indent=2, default=_json_default), encoding="utf-8"
+    )
+    print(f"\nWrote execution output to {path}")
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    args = parse_args(argv)
+    try:
+        parameter_overrides = _load_parameter_overrides(
+            args.parameter_overrides, args.overrides_file
+        )
+    except ValueError as exc:
+        print(f"Error loading parameter overrides: {exc}", file=sys.stderr)
+        return 2
+
+    manager = AnalysisPlanManager()
+    try:
+        execution = manager.execute_plan(
+            args.plan_id,
+            parameter_overrides=parameter_overrides,
+            use_cache=args.use_cache,
+        )
+    except Exception as exc:  # pragma: no cover - surfaced to CLI user
+        print(f"Failed to execute analysis plan '{args.plan_id}': {exc}", file=sys.stderr)
+        return 1
+
+    _print_summary(plan_id=args.plan_id, execution=execution, sample_rows=args.sample_rows)
+
+    if args.output_json:
+        _write_output_json(args.output_json, execution)
+
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
