@@ -5,28 +5,29 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 class CacheManager:
     """
     Manages caching of query results using MongoDB.
     """
-    
+
     def __init__(self, query_result_model: QueryResult = None):
         """
         Initialize cache manager.
-        
+
         Args:
             query_result_model: QueryResult model instance
         """
         self.query_result_model = query_result_model or QueryResult()
-    
+
     def get(self, source_id: str, parameters: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Retrieve cached query result.
-        
+
         Args:
             source_id: Data source identifier
             parameters: Query parameters
-            
+
         Returns:
             Cached result or None if not found
         """
@@ -41,19 +42,19 @@ class CacheManager:
         except Exception as e:
             logger.error(f"Cache retrieval error: {str(e)}")
             return None
-    
-    def set(self, source_id: str, parameters: Dict[str, Any], 
+
+    def set(self, source_id: str, parameters: Dict[str, Any],
             result: Dict[str, Any], ttl: int = None, query_id: str = None) -> bool:
         """
         Store query result in cache.
-        
+
         Args:
             source_id: Data source identifier
             parameters: Query parameters
             result: Query result to cache
             ttl: Time to live in seconds
             query_id: Optional reference to stored query
-            
+
         Returns:
             bool: True if successful
         """
@@ -64,15 +65,15 @@ class CacheManager:
         except Exception as e:
             logger.error(f"Cache storage error: {str(e)}")
             return False
-    
+
     def invalidate(self, source_id: str, parameters: Dict[str, Any] = None) -> int:
         """
         Invalidate cached results.
-        
+
         Args:
             source_id: Data source identifier
             parameters: Optional specific query to invalidate
-            
+
         Returns:
             Number of invalidated entries
         """
@@ -83,11 +84,11 @@ class CacheManager:
         except Exception as e:
             logger.error(f"Cache invalidation error: {str(e)}")
             return 0
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """
         Get cache statistics.
-        
+
         Returns:
             Dict containing cache statistics
         """
@@ -98,3 +99,43 @@ class CacheManager:
             return {
                 "error": str(e)
             }
+
+    def cache_query_columns(self, query_id: str, columns: list,
+                            column_types: dict = None, row_count: int = None) -> bool:
+        """
+        Cache column names for a query.
+
+        Args:
+            query_id: Stored query identifier
+            columns: List of column names
+            column_types: Optional dict mapping column names to types
+            row_count: Optional row count from query results
+
+        Returns:
+            bool: True if successful
+        """
+        try:
+            from models.query_column_cache import QueryColumnCache
+            cache = QueryColumnCache()
+            return cache.cache_columns(query_id, columns, column_types, row_count)
+        except Exception as e:
+            logger.error(f"Failed to cache columns for {query_id}: {str(e)}")
+            return False
+
+    def get_query_columns(self, query_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get cached columns for a query.
+
+        Args:
+            query_id: Stored query identifier
+
+        Returns:
+            Dict with columns, column_types, row_count or None if not found
+        """
+        try:
+            from models.query_column_cache import QueryColumnCache
+            cache = QueryColumnCache()
+            return cache.get_columns(query_id)
+        except Exception as e:
+            logger.error(f"Failed to get cached columns for {query_id}: {str(e)}")
+            return None
