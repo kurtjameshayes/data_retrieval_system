@@ -1,0 +1,1815 @@
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.env' '--exclude=.idea' /tmp/orig_repo/analyze_data.py python_src/analyze_data.py
+--- /tmp/orig_repo/analyze_data.py	1970-01-01 00:00:00.000000000 +0000
++++ python_src/analyze_data.py	2025-12-05 22:44:48.796419348 +0000
+@@ -0,0 +1,119 @@
++#!/usr/bin/env python3
++"""
++Wrapper script to run data analysis on query results via Python.
++This script is invoked by the Node.js backend via subprocess.
++"""
++import sys
++import os
++import json
++import logging
++import math
++
++os.environ["MONGO_URI"] = os.environ.get("MONGODB_URI", "")
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++import pandas as pd
++import numpy as np
++from core.data_analysis import DataAnalysisEngine
++from core.query_engine import QueryEngine
++
++logging.basicConfig(level=logging.WARNING)
++logger = logging.getLogger(__name__)
++
++
++def clean_for_json(obj):
++    """Recursively clean an object for JSON serialization by replacing NaN/Inf with None."""
++    if isinstance(obj, dict):
++        return {k: clean_for_json(v) for k, v in obj.items()}
++    elif isinstance(obj, list):
++        return [clean_for_json(item) for item in obj]
++    elif isinstance(obj, float):
++        if math.isnan(obj) or math.isinf(obj):
++            return None
++        return obj
++    elif isinstance(obj, (np.floating, np.integer)):
++        if np.isnan(obj) or np.isinf(obj):
++            return None
++        return float(obj) if isinstance(obj, np.floating) else int(obj)
++    elif pd.isna(obj):
++        return None
++    return obj
++
++
++def main():
++    if len(sys.argv) < 2:
++        result = {
++            "success": False,
++            "error": "Usage: analyze_data.py <query_id> [analysis_type]"
++        }
++        print(json.dumps(result))
++        sys.exit(1)
++    
++    query_id = sys.argv[1]
++    analysis_type = sys.argv[2] if len(sys.argv) > 2 else "basic"
++    
++    try:
++        engine = QueryEngine()
++        analysis_engine = DataAnalysisEngine()
++        
++        query_result = engine.execute_stored_query(query_id, use_cache=True)
++        
++        if not query_result.get("success"):
++            print(json.dumps(query_result))
++            sys.exit(1)
++        
++        data = query_result.get("data", {})
++        records = data.get("data", []) if isinstance(data, dict) else data
++        
++        if not records:
++            result = {
++                "success": False,
++                "error": "No data available for analysis",
++                "query_id": query_id
++            }
++            print(json.dumps(result))
++            sys.exit(1)
++        
++        df = pd.DataFrame(records)
++        
++        analysis_result = {
++            "success": True,
++            "query_id": query_id,
++            "record_count": len(records),
++            "analysis_type": analysis_type
++        }
++        
++        if analysis_type == "basic":
++            analysis_result["analysis"] = analysis_engine.basic_statistics(df)
++        elif analysis_type == "exploratory":
++            analysis_result["analysis"] = analysis_engine.exploratory_analysis(df)
++        elif analysis_type == "full":
++            analysis_result["analysis"] = {
++                "basic": analysis_engine.basic_statistics(df),
++                "exploratory": analysis_engine.exploratory_analysis(df)
++            }
++        else:
++            result = {
++                "success": False,
++                "error": f"Unknown analysis type: {analysis_type}. Use 'basic', 'exploratory', or 'full'"
++            }
++            print(json.dumps(result))
++            sys.exit(1)
++        
++        cleaned_result = clean_for_json(analysis_result)
++        print(json.dumps(cleaned_result, default=str))
++        
++    except Exception as e:
++        logger.error(f"Analysis error: {str(e)}")
++        result = {
++            "success": False,
++            "error": str(e),
++            "query_id": query_id
++        }
++        print(json.dumps(result))
++        sys.exit(1)
++
++
++if __name__ == "__main__":
++    main()
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.env' '--exclude=.idea' /tmp/orig_repo/core/cache_manager.py python_src/core/cache_manager.py
+--- /tmp/orig_repo/core/cache_manager.py	2025-12-07 18:40:44.735722743 +0000
++++ python_src/core/cache_manager.py	2025-12-07 18:37:15.531762536 +0000
+@@ -98,3 +98,43 @@
+             return {
+                 "error": str(e)
+             }
++    
++    def cache_query_columns(self, query_id: str, columns: list, 
++                           column_types: dict = None, row_count: int = None) -> bool:
++        """
++        Cache column names for a query.
++        
++        Args:
++            query_id: Stored query identifier
++            columns: List of column names
++            column_types: Optional dict mapping column names to types
++            row_count: Optional row count from query results
++            
++        Returns:
++            bool: True if successful
++        """
++        try:
++            from models.query_column_cache import QueryColumnCache
++            cache = QueryColumnCache()
++            return cache.cache_columns(query_id, columns, column_types, row_count)
++        except Exception as e:
++            logger.error(f"Failed to cache columns for {query_id}: {str(e)}")
++            return False
++    
++    def get_query_columns(self, query_id: str) -> Optional[Dict[str, Any]]:
++        """
++        Get cached columns for a query.
++        
++        Args:
++            query_id: Stored query identifier
++            
++        Returns:
++            Dict with columns, column_types, row_count or None if not found
++        """
++        try:
++            from models.query_column_cache import QueryColumnCache
++            cache = QueryColumnCache()
++            return cache.get_columns(query_id)
++        except Exception as e:
++            logger.error(f"Failed to get cached columns for {query_id}: {str(e)}")
++            return None
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.env' '--exclude=.idea' /tmp/orig_repo/core/query_engine.py python_src/core/query_engine.py
+--- /tmp/orig_repo/core/query_engine.py	2025-12-07 18:40:44.736722742 +0000
++++ python_src/core/query_engine.py	2025-12-07 18:38:04.303846922 +0000
+@@ -145,6 +145,8 @@
+             if result.get("success"):
+                 result["query_name"] = stored_query.get("query_name")
+                 result["query_description"] = stored_query.get("description")
++                # Cache columns for the query
++                self._cache_columns_from_result(query_id, result)
+             
+             return result
+             
+@@ -476,3 +478,77 @@
+             "cache_stats": self.cache_manager.get_stats(),
+             "available_sources": len(self.connector_manager.list_sources())
+         }
++    
++    def _extract_records(self, result: Dict[str, Any]) -> List[Dict[str, Any]]:
++        """
++        Extract records from query result.
++        
++        Args:
++            result: Query result
++            
++        Returns:
++            List of record dicts
++        """
++        data = result.get("data", {})
++        if isinstance(data, dict):
++            records = data.get("data", [])
++            if isinstance(records, list):
++                return records
++        elif isinstance(data, list):
++            return data
++        return []
++    
++    def _cache_columns_from_result(self, query_id: str, result: Dict[str, Any]) -> None:
++        """
++        Extract and cache column names from query result.
++        
++        Args:
++            query_id: Stored query identifier
++            result: Query result containing data
++        """
++        try:
++            records = self._extract_records(result)
++            if not records:
++                return
++            
++            row_count = len(records)
++            all_columns = set()
++            column_types = {}
++            
++            for record in records:
++                new_keys = set(record.keys()) - all_columns
++                if new_keys:
++                    for col in new_keys:
++                        val = record.get(col)
++                        column_types[col] = type(val).__name__ if val is not None else "NoneType"
++                    all_columns.update(new_keys)
++                else:
++                    for col in record.keys():
++                        if column_types.get(col) == "NoneType":
++                            val = record.get(col)
++                            if val is not None:
++                                column_types[col] = type(val).__name__
++            
++            columns = sorted(list(all_columns))
++            
++            self.cache_manager.cache_query_columns(
++                query_id=query_id,
++                columns=columns,
++                column_types=column_types,
++                row_count=row_count
++            )
++            logger.info(f"Cached {len(columns)} columns for query {query_id} from {row_count} records")
++        except Exception as e:
++            logger.warning(f"Failed to cache columns for query {query_id}: {str(e)}")
++    
++    def get_cached_columns(self, query_id: str) -> Optional[Dict[str, Any]]:
++        """
++        Get cached column names for a query.
++        
++        Args:
++            query_id: Stored query identifier
++            
++        Returns:
++            Dict with columns, column_types, row_count or None
++        """
++        return self.cache_manager.get_query_columns(query_id)
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.env' '--exclude=.idea' /tmp/orig_repo/execute_analysis_plan.py python_src/execute_analysis_plan.py
+--- /tmp/orig_repo/execute_analysis_plan.py	1970-01-01 00:00:00.000000000 +0000
++++ python_src/execute_analysis_plan.py	2025-12-06 02:57:45.663018702 +0000
+@@ -0,0 +1,301 @@
++#!/usr/bin/env python3
++"""
++Wrapper script to execute analysis plans via Python.
++This script is invoked by the Node.js backend via subprocess.
++
++An analysis plan can reference multiple queries, join their results,
++and run configurable analysis using DataAnalysisEngine.run_suite().
++"""
++import sys
++import os
++import json
++import logging
++import math
++
++os.environ["MONGO_URI"] = os.environ.get("MONGODB_URI", "")
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++import pandas as pd
++import numpy as np
++from models.analysis_plan import AnalysisPlan
++from core.query_engine import QueryEngine
++from core.data_analysis import DataAnalysisEngine
++
++logging.basicConfig(level=logging.WARNING)
++logger = logging.getLogger(__name__)
++
++
++def clean_for_json(obj):
++    """Recursively clean an object for JSON serialization by replacing NaN/Inf with None."""
++    if isinstance(obj, dict):
++        return {k: clean_for_json(v) for k, v in obj.items()}
++    elif isinstance(obj, list):
++        return [clean_for_json(item) for item in obj]
++    elif isinstance(obj, float):
++        if math.isnan(obj) or math.isinf(obj):
++            return None
++        return obj
++    elif isinstance(obj, (np.floating, np.integer)):
++        if np.isnan(obj) or np.isinf(obj):
++            return None
++        return float(obj) if isinstance(obj, np.floating) else int(obj)
++    elif pd.isna(obj):
++        return None
++    return obj
++
++
++def execute_queries_and_join(engine: QueryEngine, queries_config: list) -> pd.DataFrame:
++    """
++    Execute multiple queries and join their results.
++    
++    Args:
++        engine: QueryEngine instance
++        queries_config: List of query configurations with query_id, alias, join_column
++        
++    Returns:
++        Joined DataFrame
++    """
++    if not queries_config:
++        raise ValueError("No queries specified in plan")
++    
++    dataframes = {}
++    
++    for i, query_cfg in enumerate(queries_config):
++        query_id = query_cfg.get('query_id')
++        alias = query_cfg.get('alias', f'query_{i}')
++        
++        if not query_id:
++            raise ValueError(f"Query config at index {i} missing query_id")
++        
++        result = engine.execute_stored_query(query_id, use_cache=True)
++        
++        if not result.get('success'):
++            raise ValueError(f"Query {query_id} failed: {result.get('error', 'Unknown error')}")
++        
++        data = result.get('data', {})
++        records = data.get('data', []) if isinstance(data, dict) else data
++        
++        if not records:
++            raise ValueError(f"Query {query_id} returned no data")
++        
++        df = pd.DataFrame(records)
++        dataframes[alias] = {
++            'df': df,
++            'join_column': query_cfg.get('join_column'),
++            'config': query_cfg
++        }
++    
++    if len(dataframes) == 1:
++        return list(dataframes.values())[0]['df']
++    
++    aliases = list(dataframes.keys())
++    result_df = dataframes[aliases[0]]['df']
++    
++    for alias in aliases[1:]:
++        df_info = dataframes[alias]
++        join_col = df_info['join_column']
++        
++        if not join_col:
++            result_df = pd.concat([result_df, df_info['df']], axis=1)
++        else:
++            left_join_col = dataframes[aliases[0]]['join_column'] or join_col
++            if left_join_col not in result_df.columns:
++                if join_col in result_df.columns:
++                    left_join_col = join_col
++                else:
++                    for col in result_df.columns:
++                        if col.lower() == join_col.lower():
++                            left_join_col = col
++                            break
++            
++            if left_join_col not in result_df.columns:
++                result_df = pd.concat([result_df, df_info['df']], axis=1)
++            elif join_col not in df_info['df'].columns:
++                result_df = pd.concat([result_df, df_info['df']], axis=1)
++            else:
++                result_df = result_df.merge(
++                    df_info['df'],
++                    left_on=left_join_col,
++                    right_on=join_col,
++                    how='outer',
++                    suffixes=('', f'_{alias}')
++                )
++    
++    return result_df
++
++
++def get_query_columns(engine: QueryEngine, query_id: str) -> list:
++    """
++    Execute a query and return its column names.
++    
++    Args:
++        engine: QueryEngine instance
++        query_id: Stored query ID
++        
++    Returns:
++        List of column names
++    """
++    result = engine.execute_stored_query(query_id, use_cache=True)
++    
++    if not result.get('success'):
++        raise ValueError(f"Query {query_id} failed: {result.get('error', 'Unknown error')}")
++    
++    data = result.get('data', {})
++    records = data.get('data', []) if isinstance(data, dict) else data
++    
++    if not records:
++        schema = data.get('schema', {})
++        fields = schema.get('fields', [])
++        if fields:
++            return [f.get('name') for f in fields if f.get('name')]
++        return []
++    
++    return list(records[0].keys())
++
++
++def main():
++    if len(sys.argv) < 2:
++        result = {
++            "success": False,
++            "error": "Usage: execute_analysis_plan.py <action> [args...]"
++        }
++        print(json.dumps(result))
++        sys.exit(1)
++    
++    action = sys.argv[1]
++    
++    try:
++        plan_model = AnalysisPlan()
++        engine = QueryEngine()
++        analysis_engine = DataAnalysisEngine()
++        
++        if action == "execute":
++            if len(sys.argv) < 3:
++                raise ValueError("plan_id required for execute action")
++            
++            plan_id = sys.argv[2]
++            plan = plan_model.get_by_id(plan_id)
++            
++            if not plan:
++                raise ValueError(f"Plan not found: {plan_id}")
++            
++            df = execute_queries_and_join(engine, plan.get('queries', []))
++            
++            analysis_config = plan.get('analysis_plan', {})
++            
++            if not analysis_config:
++                analysis_results = {
++                    "basic_statistics": analysis_engine.basic_statistics(df),
++                    "exploratory_analysis": analysis_engine.exploratory_analysis(df)
++                }
++            else:
++                analysis_results = analysis_engine.run_suite(df, analysis_config)
++            
++            plan_model.update_run_status(plan_id, 'success')
++            
++            result = {
++                "success": True,
++                "plan_id": plan_id,
++                "plan_name": plan.get('plan_name'),
++                "record_count": len(df),
++                "columns": list(df.columns),
++                "analysis": analysis_results,
++                "data_sample": df.head(20).to_dict(orient='records')
++            }
++            
++        elif action == "get_columns":
++            if len(sys.argv) < 3:
++                raise ValueError("query_id required for get_columns action")
++            
++            query_id = sys.argv[2]
++            columns = get_query_columns(engine, query_id)
++            
++            result = {
++                "success": True,
++                "query_id": query_id,
++                "columns": columns
++            }
++            
++        elif action == "get_joined_columns":
++            if len(sys.argv) < 3:
++                raise ValueError("queries_config JSON required for get_joined_columns action")
++            
++            queries_config = json.loads(sys.argv[2])
++            df = execute_queries_and_join(engine, queries_config)
++            
++            result = {
++                "success": True,
++                "columns": list(df.columns),
++                "record_count": len(df),
++                "sample": df.head(5).to_dict(orient='records')
++            }
++            
++        elif action == "preview":
++            if len(sys.argv) < 3:
++                raise ValueError("plan_id required for preview action")
++            
++            plan_id = sys.argv[2]
++            plan = plan_model.get_by_id(plan_id)
++            
++            if not plan:
++                raise ValueError(f"Plan not found: {plan_id}")
++            
++            df = execute_queries_and_join(engine, plan.get('queries', []))
++            
++            result = {
++                "success": True,
++                "plan_id": plan_id,
++                "columns": list(df.columns),
++                "record_count": len(df),
++                "sample": df.head(20).to_dict(orient='records')
++            }
++            
++        elif action == "validate_plan":
++            if len(sys.argv) < 3:
++                raise ValueError("plan_data JSON required for validate_plan action")
++            
++            plan_data = json.loads(sys.argv[2])
++            queries_config = plan_data.get('queries', [])
++            
++            if queries_config:
++                df = execute_queries_and_join(engine, queries_config)
++                available_columns = list(df.columns)
++            else:
++                available_columns = []
++            
++            validation = plan_model.validate_columns(plan_data, available_columns)
++            
++            result = {
++                "success": True,
++                "validation": validation,
++                "available_columns": available_columns
++            }
++            
++        else:
++            result = {"success": False, "error": f"Unknown action: {action}"}
++        
++        cleaned_result = clean_for_json(result)
++        print(json.dumps(cleaned_result, default=str))
++        
++    except json.JSONDecodeError as e:
++        result = {"success": False, "error": f"Invalid JSON: {str(e)}"}
++        print(json.dumps(result))
++        sys.exit(1)
++    except Exception as e:
++        logger.error(f"Error: {str(e)}")
++        
++        if len(sys.argv) >= 3 and sys.argv[1] == "execute":
++            try:
++                plan_model = AnalysisPlan()
++                plan_model.update_run_status(sys.argv[2], 'error', str(e))
++            except:
++                pass
++        
++        result = {"success": False, "error": str(e)}
++        print(json.dumps(result))
++        sys.exit(1)
++
++
++if __name__ == "__main__":
++    main()
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.env' '--exclude=.idea' /tmp/orig_repo/execute_query.py python_src/execute_query.py
+--- /tmp/orig_repo/execute_query.py	1970-01-01 00:00:00.000000000 +0000
++++ python_src/execute_query.py	2025-12-05 22:44:48.793419354 +0000
+@@ -0,0 +1,71 @@
++#!/usr/bin/env python3
++"""
++Wrapper script to execute ad-hoc queries (not stored queries) via Python.
++This script is invoked by the Node.js backend via subprocess.
++"""
++import sys
++import os
++import json
++import logging
++
++os.environ["MONGO_URI"] = os.environ.get("MONGODB_URI", "")
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++from core.query_engine import QueryEngine
++
++logging.basicConfig(level=logging.WARNING)
++logger = logging.getLogger(__name__)
++
++
++def main():
++    if len(sys.argv) < 3:
++        result = {
++            "success": False,
++            "error": "Usage: execute_query.py <source_id> <parameters_json> [--no-cache]"
++        }
++        print(json.dumps(result))
++        sys.exit(1)
++    
++    source_id = sys.argv[1]
++    
++    try:
++        parameters = json.loads(sys.argv[2])
++    except json.JSONDecodeError as e:
++        result = {
++            "success": False,
++            "error": f"Invalid parameters JSON: {str(e)}"
++        }
++        print(json.dumps(result))
++        sys.exit(1)
++    
++    use_cache = "--no-cache" not in sys.argv
++    
++    try:
++        engine = QueryEngine()
++        result = engine.execute_query(
++            source_id=source_id,
++            parameters=parameters,
++            use_cache=use_cache
++        )
++        
++        if "data" in result and isinstance(result["data"], dict):
++            data = result["data"]
++            if "data" in data and isinstance(data["data"], list):
++                result["record_count"] = len(data["data"])
++        
++        print(json.dumps(result, default=str))
++        
++    except Exception as e:
++        logger.error(f"Query execution error: {str(e)}")
++        result = {
++            "success": False,
++            "error": str(e),
++            "source_id": source_id
++        }
++        print(json.dumps(result))
++        sys.exit(1)
++
++
++if __name__ == "__main__":
++    main()
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.env' '--exclude=.idea' /tmp/orig_repo/get_cache_stats.py python_src/get_cache_stats.py
+--- /tmp/orig_repo/get_cache_stats.py	1970-01-01 00:00:00.000000000 +0000
++++ python_src/get_cache_stats.py	2025-12-05 22:44:48.797419346 +0000
+@@ -0,0 +1,44 @@
++#!/usr/bin/env python3
++"""
++Wrapper script to get cache and query statistics via Python.
++This script is invoked by the Node.js backend via subprocess.
++"""
++import sys
++import os
++import json
++import logging
++
++os.environ["MONGO_URI"] = os.environ.get("MONGODB_URI", "")
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++from core.query_engine import QueryEngine
++
++logging.basicConfig(level=logging.WARNING)
++logger = logging.getLogger(__name__)
++
++
++def main():
++    try:
++        engine = QueryEngine()
++        stats = engine.get_query_stats()
++        
++        result = {
++            "success": True,
++            "stats": stats
++        }
++        
++        print(json.dumps(result, default=str))
++        
++    except Exception as e:
++        logger.error(f"Stats error: {str(e)}")
++        result = {
++            "success": False,
++            "error": str(e)
++        }
++        print(json.dumps(result))
++        sys.exit(1)
++
++
++if __name__ == "__main__":
++    main()
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.env' '--exclude=.idea' /tmp/orig_repo/get_query_columns.py python_src/get_query_columns.py
+--- /tmp/orig_repo/get_query_columns.py	1970-01-01 00:00:00.000000000 +0000
++++ python_src/get_query_columns.py	2025-12-06 21:35:05.164899152 +0000
+@@ -0,0 +1,155 @@
++#!/usr/bin/env python3
++"""
++Get Query Columns Script
++
++Retrieves cached column information for stored queries.
++If columns are not cached, executes the query to get them.
++"""
++
++import sys
++import os
++import json
++import argparse
++import logging
++
++os.environ["MONGO_URI"] = os.environ.get("MONGODB_URI", "")
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++logging.basicConfig(level=logging.WARNING)
++logger = logging.getLogger(__name__)
++
++from core.query_engine import QueryEngine
++from models.query_column_cache import QueryColumnCache
++
++
++def get_columns_for_query(query_id: str, force_refresh: bool = False):
++    """
++    Get cached columns for a query, optionally refreshing by executing the query.
++    
++    Args:
++        query_id: Stored query identifier
++        force_refresh: If True, execute the query to refresh column cache
++        
++    Returns:
++        Dict with columns info
++    """
++    engine = QueryEngine()
++    column_cache = QueryColumnCache()
++    
++    if not force_refresh:
++        cached = column_cache.get_columns(query_id)
++        if cached:
++            return {
++                "success": True,
++                "source": "cache",
++                **cached
++            }
++    
++    result = engine.execute_stored_query(query_id, use_cache=True)
++    
++    if not result.get("success"):
++        return {
++            "success": False,
++            "error": result.get("error", "Query execution failed"),
++            "query_id": query_id
++        }
++    
++    cached = column_cache.get_columns(query_id)
++    if cached:
++        return {
++            "success": True,
++            "source": "executed",
++            **cached
++        }
++    
++    records = engine._extract_records(result)
++    if records:
++        columns = list(records[0].keys())
++        column_types = {col: type(val).__name__ for col, val in records[0].items()}
++        return {
++            "success": True,
++            "source": "executed",
++            "query_id": query_id,
++            "columns": columns,
++            "column_types": column_types,
++            "row_count": len(records)
++        }
++    
++    return {
++        "success": False,
++        "error": "No data returned from query",
++        "query_id": query_id
++    }
++
++
++def get_columns_for_queries(query_ids: list, force_refresh: bool = False):
++    """
++    Get cached columns for multiple queries.
++    
++    Args:
++        query_ids: List of stored query identifiers
++        force_refresh: If True, execute queries to refresh column cache
++        
++    Returns:
++        Dict mapping query_id to column info
++    """
++    column_cache = QueryColumnCache()
++    
++    if not force_refresh:
++        cached = column_cache.get_columns_for_queries(query_ids)
++        missing_ids = [qid for qid in query_ids if qid not in cached]
++        
++        if not missing_ids:
++            return {
++                "success": True,
++                "source": "cache",
++                "columns": cached
++            }
++    else:
++        missing_ids = query_ids
++        cached = {}
++    
++    engine = QueryEngine()
++    for query_id in missing_ids:
++        result = engine.execute_stored_query(query_id, use_cache=True)
++        if result.get("success"):
++            records = engine._extract_records(result)
++            if records:
++                columns = list(records[0].keys())
++                column_types = {col: type(val).__name__ for col, val in records[0].items()}
++                cached[query_id] = {
++                    "columns": columns,
++                    "column_types": column_types,
++                    "row_count": len(records)
++                }
++    
++    return {
++        "success": True,
++        "source": "mixed" if not force_refresh else "executed",
++        "columns": cached
++    }
++
++
++def main():
++    parser = argparse.ArgumentParser(description="Get cached columns for stored queries")
++    parser.add_argument("--query-id", "-q", help="Single query ID to get columns for")
++    parser.add_argument("--query-ids", "-Q", help="JSON array of query IDs")
++    parser.add_argument("--force-refresh", "-f", action="store_true",
++                        help="Force refresh by executing queries")
++    
++    args = parser.parse_args()
++    
++    if args.query_id:
++        result = get_columns_for_query(args.query_id, args.force_refresh)
++    elif args.query_ids:
++        query_ids = json.loads(args.query_ids)
++        result = get_columns_for_queries(query_ids, args.force_refresh)
++    else:
++        result = {"success": False, "error": "No query ID(s) provided"}
++    
++    print(json.dumps(result, indent=2, default=str))
++
++
++if __name__ == "__main__":
++    main()
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.env' '--exclude=.idea' /tmp/orig_repo/manage_analysis_plan.py python_src/manage_analysis_plan.py
+--- /tmp/orig_repo/manage_analysis_plan.py	1970-01-01 00:00:00.000000000 +0000
++++ python_src/manage_analysis_plan.py	2025-12-06 00:15:49.332633660 +0000
+@@ -0,0 +1,114 @@
++#!/usr/bin/env python3
++"""
++Wrapper script to manage analysis plans (CRUD) via Python.
++This script is invoked by the Node.js backend via subprocess.
++"""
++import sys
++import os
++import json
++import logging
++
++os.environ["MONGO_URI"] = os.environ.get("MONGODB_URI", "")
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++from models.analysis_plan import AnalysisPlan
++
++logging.basicConfig(level=logging.WARNING)
++logger = logging.getLogger(__name__)
++
++
++def main():
++    if len(sys.argv) < 2:
++        result = {
++            "success": False,
++            "error": "Usage: manage_analysis_plan.py <action> [args...]"
++        }
++        print(json.dumps(result))
++        sys.exit(1)
++    
++    action = sys.argv[1]
++    
++    try:
++        plan_model = AnalysisPlan()
++        
++        if action == "list":
++            active_only = "--active" in sys.argv
++            plans = plan_model.get_all(active_only=active_only)
++            result = {
++                "success": True,
++                "plans": plans,
++                "count": len(plans)
++            }
++            
++        elif action == "get":
++            if len(sys.argv) < 3:
++                raise ValueError("plan_id required for get action")
++            plan_id = sys.argv[2]
++            plan = plan_model.get_by_id(plan_id)
++            if plan:
++                result = {"success": True, "plan": plan}
++            else:
++                result = {"success": False, "error": f"Plan not found: {plan_id}"}
++                
++        elif action == "create":
++            if len(sys.argv) < 3:
++                raise ValueError("plan_data JSON required for create action")
++            plan_data = json.loads(sys.argv[2])
++            created = plan_model.create(plan_data)
++            result = {"success": True, "plan": created}
++            
++        elif action == "update":
++            if len(sys.argv) < 4:
++                raise ValueError("plan_id and update_data JSON required for update action")
++            plan_id = sys.argv[2]
++            update_data = json.loads(sys.argv[3])
++            success = plan_model.update(plan_id, update_data)
++            if success:
++                updated = plan_model.get_by_id(plan_id)
++                result = {"success": True, "plan": updated}
++            else:
++                result = {"success": False, "error": f"Failed to update plan: {plan_id}"}
++                
++        elif action == "delete":
++            if len(sys.argv) < 3:
++                raise ValueError("plan_id required for delete action")
++            plan_id = sys.argv[2]
++            success = plan_model.delete(plan_id)
++            result = {"success": success, "plan_id": plan_id}
++            if not success:
++                result["error"] = f"Failed to delete plan: {plan_id}"
++                
++        elif action == "validate":
++            if len(sys.argv) < 4:
++                raise ValueError("plan_data JSON and columns JSON required for validate action")
++            plan_data = json.loads(sys.argv[2])
++            available_columns = json.loads(sys.argv[3])
++            validation = plan_model.validate_columns(plan_data, available_columns)
++            result = {"success": True, "validation": validation}
++            
++        elif action == "find_by_query":
++            if len(sys.argv) < 3:
++                raise ValueError("query_id required for find_by_query action")
++            query_id = sys.argv[2]
++            plans = plan_model.get_plans_using_query(query_id)
++            result = {"success": True, "plans": plans, "count": len(plans)}
++            
++        else:
++            result = {"success": False, "error": f"Unknown action: {action}"}
++        
++        print(json.dumps(result, default=str))
++        
++    except json.JSONDecodeError as e:
++        result = {"success": False, "error": f"Invalid JSON: {str(e)}"}
++        print(json.dumps(result))
++        sys.exit(1)
++    except Exception as e:
++        logger.error(f"Error: {str(e)}")
++        result = {"success": False, "error": str(e)}
++        print(json.dumps(result))
++        sys.exit(1)
++
++
++if __name__ == "__main__":
++    main()
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.env' '--exclude=.idea' /tmp/orig_repo/models/analysis_plan.py python_src/models/analysis_plan.py
+--- /tmp/orig_repo/models/analysis_plan.py	1970-01-01 00:00:00.000000000 +0000
++++ python_src/models/analysis_plan.py	2025-12-06 01:59:15.814791437 +0000
+@@ -0,0 +1,344 @@
++"""
++Analysis Plan Model
++
++Manages analysis plans in MongoDB for configurable multi-query joins and ML-based analysis.
++"""
++
++from pymongo import MongoClient, ASCENDING, DESCENDING
++from config import Config
++from datetime import datetime
++from typing import Dict, Any, List, Optional
++import logging
++
++logger = logging.getLogger(__name__)
++
++
++class AnalysisPlan:
++    """
++    Model for managing analysis plans in MongoDB.
++    
++    Schema:
++        plan_id: Unique identifier for the plan
++        plan_name: Human-readable name
++        description: Optional description of what the analysis does
++        
++        # Query configuration for data joining
++        queries: List of query configurations for joining
++            - query_id: Reference to stored_query
++            - alias: Short name for this query in the analysis
++            - join_column: Column to use for joining with other queries
++            
++        # Analysis configuration 
++        analysis_plan: Configuration for DataAnalysisEngine.run_suite()
++            - basic_statistics: bool
++            - exploratory: bool
++            - inferential_tests: List of test configurations
++            - time_series: Time series config with time_column, target_column
++            - linear_regression: Regression config with features, target
++            - random_forest: Random forest config with features, target
++            - multivariate: PCA config with features, n_components
++            - predictive: Predictive model config
++            
++        created_at: Creation timestamp
++        updated_at: Last update timestamp
++        tags: Optional list of tags
++        active: Whether the plan is active
++        last_run_at: Timestamp of last execution
++        last_run_status: Success/error status of last run
++    """
++    
++    def __init__(self):
++        """Initialize AnalysisPlan model."""
++        self.client = MongoClient(Config.MONGO_URI)
++        self.db = self.client[Config.DATABASE_NAME]
++        self.collection = self.db['analysis_plans']
++        self._ensure_indexes()
++    
++    def _ensure_indexes(self):
++        """Create indexes for the analysis_plans collection."""
++        try:
++            self.collection.create_index([("plan_id", ASCENDING)], unique=True)
++            self.collection.create_index([("tags", ASCENDING)])
++            self.collection.create_index([("active", ASCENDING)])
++            self.collection.create_index([("created_at", DESCENDING)])
++            
++            logger.info("AnalysisPlan indexes created successfully")
++        except Exception as e:
++            logger.error(f"Error creating AnalysisPlan indexes: {str(e)}")
++    
++    def create(self, plan_data: Dict[str, Any]) -> Dict[str, Any]:
++        """
++        Create a new analysis plan.
++        
++        Args:
++            plan_data: Dictionary containing plan information
++                Required fields: plan_id, plan_name, queries, analysis_plan
++                Optional fields: description, tags
++        
++        Returns:
++            dict: Created plan document
++        """
++        required_fields = ['plan_id', 'plan_name', 'queries', 'analysis_plan']
++        for field in required_fields:
++            if field not in plan_data:
++                raise ValueError(f"Missing required field: {field}")
++        
++        if not plan_data['queries'] or len(plan_data['queries']) == 0:
++            raise ValueError("At least one query is required")
++        
++        now = datetime.utcnow()
++        plan_data['created_at'] = now
++        plan_data['updated_at'] = now
++        
++        if 'active' not in plan_data:
++            plan_data['active'] = True
++        
++        if 'tags' not in plan_data:
++            plan_data['tags'] = []
++        
++        plan_data['last_run_at'] = None
++        plan_data['last_run_status'] = None
++        
++        try:
++            self.collection.insert_one(plan_data)
++            logger.info(f"Created analysis plan: {plan_data['plan_id']}")
++            plan_data.pop('_id', None)
++            return plan_data
++        except Exception as e:
++            logger.error(f"Error creating analysis plan: {str(e)}")
++            raise
++    
++    def get_by_id(self, plan_id: str) -> Optional[Dict[str, Any]]:
++        """
++        Get an analysis plan by ID.
++        
++        Args:
++            plan_id: Plan identifier
++            
++        Returns:
++            dict: Plan document or None if not found
++        """
++        try:
++            plan = self.collection.find_one({"plan_id": plan_id})
++            if plan:
++                plan.pop('_id', None)
++            return plan
++        except Exception as e:
++            logger.error(f"Error getting plan {plan_id}: {str(e)}")
++            return None
++    
++    def get_all(self, 
++                active_only: bool = False,
++                tags: Optional[List[str]] = None) -> List[Dict[str, Any]]:
++        """
++        Get all analysis plans with optional filtering.
++        
++        Args:
++            active_only: Only return active plans
++            tags: Filter by tags
++            
++        Returns:
++            list: List of plan documents
++        """
++        try:
++            filter_dict = {}
++            
++            if active_only:
++                filter_dict['active'] = True
++            
++            if tags:
++                filter_dict['tags'] = {'$in': tags}
++            
++            plans = list(self.collection.find(filter_dict).sort("plan_name", ASCENDING))
++            
++            for plan in plans:
++                plan.pop('_id', None)
++            
++            return plans
++        except Exception as e:
++            logger.error(f"Error getting plans: {str(e)}")
++            return []
++    
++    def update(self, plan_id: str, update_data: Dict[str, Any]) -> bool:
++        """
++        Update an analysis plan.
++        
++        Args:
++            plan_id: Plan identifier
++            update_data: Dictionary of fields to update
++            
++        Returns:
++            bool: True if successful, False otherwise
++        """
++        try:
++            update_data['updated_at'] = datetime.utcnow()
++            update_data.pop('plan_id', None)
++            
++            update_ops = {"$set": update_data}
++            
++            if 'analysis_plan' in update_data:
++                update_ops["$unset"] = {"analysis_config": ""}
++            
++            result = self.collection.update_one(
++                {"plan_id": plan_id},
++                update_ops
++            )
++            
++            if result.modified_count > 0:
++                logger.info(f"Updated analysis plan: {plan_id}")
++                return True
++            else:
++                logger.warning(f"No plan found to update: {plan_id}")
++                return False
++        except Exception as e:
++            logger.error(f"Error updating plan {plan_id}: {str(e)}")
++            return False
++    
++    def delete(self, plan_id: str) -> bool:
++        """
++        Delete an analysis plan.
++        
++        Args:
++            plan_id: Plan identifier
++            
++        Returns:
++            bool: True if successful, False otherwise
++        """
++        try:
++            result = self.collection.delete_one({"plan_id": plan_id})
++            
++            if result.deleted_count > 0:
++                logger.info(f"Deleted analysis plan: {plan_id}")
++                return True
++            else:
++                logger.warning(f"No plan found to delete: {plan_id}")
++                return False
++        except Exception as e:
++            logger.error(f"Error deleting plan {plan_id}: {str(e)}")
++            return False
++    
++    def update_run_status(self, plan_id: str, status: str, error: Optional[str] = None) -> bool:
++        """
++        Update the last run status of a plan.
++        
++        Args:
++            plan_id: Plan identifier
++            status: 'success' or 'error'
++            error: Error message if status is 'error'
++            
++        Returns:
++            bool: True if successful
++        """
++        try:
++            update_data = {
++                'last_run_at': datetime.utcnow(),
++                'last_run_status': status,
++                'updated_at': datetime.utcnow()
++            }
++            
++            if error:
++                update_data['last_run_error'] = error
++            
++            result = self.collection.update_one(
++                {"plan_id": plan_id},
++                {"$set": update_data}
++            )
++            
++            return result.modified_count > 0
++        except Exception as e:
++            logger.error(f"Error updating run status for {plan_id}: {str(e)}")
++            return False
++    
++    def get_plans_using_query(self, query_id: str) -> List[Dict[str, Any]]:
++        """
++        Find all plans that use a specific query.
++        
++        Args:
++            query_id: Query identifier
++            
++        Returns:
++            list: List of plans using this query
++        """
++        try:
++            plans = list(self.collection.find({
++                "queries.query_id": query_id
++            }))
++            
++            for plan in plans:
++                plan.pop('_id', None)
++            
++            return plans
++        except Exception as e:
++            logger.error(f"Error finding plans for query {query_id}: {str(e)}")
++            return []
++    
++    def validate_columns(self, plan_data: Dict[str, Any], available_columns: List[str]) -> Dict[str, Any]:
++        """
++        Validate that all referenced columns exist in available_columns.
++        
++        Args:
++            plan_data: Plan configuration
++            available_columns: List of columns available from joined queries
++            
++        Returns:
++            dict: Validation result with 'valid' bool and 'errors' list
++        """
++        errors = []
++        config = plan_data.get('analysis_plan', {})
++        
++        for query_cfg in plan_data.get('queries', []):
++            join_col = query_cfg.get('join_column')
++            if join_col and join_col not in available_columns:
++                errors.append(f"Join column '{join_col}' not found in query output")
++        
++        if config.get('time_series'):
++            ts_cfg = config['time_series']
++            if ts_cfg.get('time_column') and ts_cfg['time_column'] not in available_columns:
++                errors.append(f"Time column '{ts_cfg['time_column']}' not found")
++            if ts_cfg.get('target_column') and ts_cfg['target_column'] not in available_columns:
++                errors.append(f"Target column '{ts_cfg['target_column']}' not found")
++        
++        for analysis_type in ['linear_regression', 'random_forest', 'predictive']:
++            if config.get(analysis_type):
++                cfg = config[analysis_type]
++                if cfg.get('target') and cfg['target'] not in available_columns:
++                    errors.append(f"{analysis_type} target '{cfg['target']}' not found")
++                for feature in cfg.get('features', []):
++                    if feature not in available_columns:
++                        errors.append(f"{analysis_type} feature '{feature}' not found")
++        
++        if config.get('multivariate'):
++            for feature in config['multivariate'].get('features', []):
++                if feature not in available_columns:
++                    errors.append(f"Multivariate feature '{feature}' not found")
++        
++        if config.get('inferential_tests'):
++            for test in config['inferential_tests']:
++                if test.get('x') and test['x'] not in available_columns:
++                    errors.append(f"Inferential test x column '{test['x']}' not found")
++                if test.get('y') and test['y'] not in available_columns:
++                    errors.append(f"Inferential test y column '{test['y']}' not found")
++        
++        return {
++            'valid': len(errors) == 0,
++            'errors': errors
++        }
++    
++    def count(self, active_only: bool = False) -> int:
++        """
++        Count analysis plans.
++        
++        Args:
++            active_only: Only count active plans
++            
++        Returns:
++            int: Number of plans
++        """
++        try:
++            filter_dict = {}
++            if active_only:
++                filter_dict['active'] = True
++            return self.collection.count_documents(filter_dict)
++        except Exception as e:
++            logger.error(f"Error counting plans: {str(e)}")
++            return 0
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.env' '--exclude=.idea' /tmp/orig_repo/models/query_column_cache.py python_src/models/query_column_cache.py
+--- /tmp/orig_repo/models/query_column_cache.py	1970-01-01 00:00:00.000000000 +0000
++++ python_src/models/query_column_cache.py	2025-12-06 21:32:12.112035961 +0000
+@@ -0,0 +1,205 @@
++"""
++Query Column Cache Model
++
++Caches column names for stored queries in MongoDB to enable fast column selection
++in Analysis Plans without needing to execute queries.
++"""
++
++from pymongo import MongoClient, ASCENDING
++from typing import Dict, Any, List, Optional
++from datetime import datetime, timedelta
++from config import Config
++import logging
++
++logger = logging.getLogger(__name__)
++
++
++class QueryColumnCache:
++    """
++    Model for caching query column names in MongoDB.
++    
++    Schema:
++        query_id: Reference to stored query
++        columns: List of column names returned by the query
++        column_types: Optional dict mapping column names to data types
++        row_count: Number of rows returned (for reference)
++        cached_at: When the columns were cached
++        expires_at: When the cache entry expires
++    """
++    
++    def __init__(self, db_client: MongoClient = None):
++        """Initialize QueryColumnCache model."""
++        if db_client is None:
++            db_client = MongoClient(Config.MONGO_URI)
++        self.db = db_client[Config.DATABASE_NAME]
++        self.collection = self.db['query_column_cache']
++        self._ensure_indexes()
++    
++    def _ensure_indexes(self):
++        """Create indexes for the query_column_cache collection."""
++        try:
++            self.collection.create_index([("query_id", ASCENDING)], unique=True)
++            self.collection.create_index("expires_at", expireAfterSeconds=0)
++            logger.info("QueryColumnCache indexes created successfully")
++        except Exception as e:
++            logger.error(f"Error creating QueryColumnCache indexes: {str(e)}")
++    
++    def cache_columns(
++        self, 
++        query_id: str, 
++        columns: List[str],
++        column_types: Optional[Dict[str, str]] = None,
++        row_count: Optional[int] = None,
++        ttl_seconds: int = 86400 * 7
++    ) -> bool:
++        """
++        Cache column names for a query.
++        
++        Args:
++            query_id: Stored query identifier
++            columns: List of column names
++            column_types: Optional dict mapping column names to types
++            row_count: Optional row count from query results
++            ttl_seconds: Time to live in seconds (default 7 days)
++            
++        Returns:
++            bool: True if successful
++        """
++        try:
++            now = datetime.utcnow()
++            cache_entry = {
++                "query_id": query_id,
++                "columns": columns,
++                "column_types": column_types or {},
++                "row_count": row_count,
++                "cached_at": now,
++                "expires_at": now + timedelta(seconds=ttl_seconds)
++            }
++            
++            self.collection.update_one(
++                {"query_id": query_id},
++                {"$set": cache_entry},
++                upsert=True
++            )
++            
++            logger.info(f"Cached {len(columns)} columns for query: {query_id}")
++            return True
++        except Exception as e:
++            logger.error(f"Error caching columns for {query_id}: {str(e)}")
++            return False
++    
++    def get_columns(self, query_id: str) -> Optional[Dict[str, Any]]:
++        """
++        Get cached columns for a query.
++        
++        Args:
++            query_id: Stored query identifier
++            
++        Returns:
++            Dict with columns, column_types, row_count or None if not found/expired
++        """
++        try:
++            cache_entry = self.collection.find_one({
++                "query_id": query_id,
++                "expires_at": {"$gt": datetime.utcnow()}
++            })
++            
++            if cache_entry:
++                return {
++                    "query_id": cache_entry["query_id"],
++                    "columns": cache_entry["columns"],
++                    "column_types": cache_entry.get("column_types", {}),
++                    "row_count": cache_entry.get("row_count"),
++                    "cached_at": cache_entry["cached_at"].isoformat() if cache_entry.get("cached_at") else None
++                }
++            return None
++        except Exception as e:
++            logger.error(f"Error getting cached columns for {query_id}: {str(e)}")
++            return None
++    
++    def get_columns_for_queries(self, query_ids: List[str]) -> Dict[str, Dict[str, Any]]:
++        """
++        Get cached columns for multiple queries.
++        
++        Args:
++            query_ids: List of stored query identifiers
++            
++        Returns:
++            Dict mapping query_id to column info
++        """
++        try:
++            result = {}
++            cache_entries = self.collection.find({
++                "query_id": {"$in": query_ids},
++                "expires_at": {"$gt": datetime.utcnow()}
++            })
++            
++            for entry in cache_entries:
++                result[entry["query_id"]] = {
++                    "columns": entry["columns"],
++                    "column_types": entry.get("column_types", {}),
++                    "row_count": entry.get("row_count"),
++                    "cached_at": entry["cached_at"].isoformat() if entry.get("cached_at") else None
++                }
++            
++            return result
++        except Exception as e:
++            logger.error(f"Error getting cached columns for queries: {str(e)}")
++            return {}
++    
++    def invalidate(self, query_id: str) -> bool:
++        """
++        Invalidate cached columns for a query.
++        
++        Args:
++            query_id: Stored query identifier
++            
++        Returns:
++            bool: True if entry was deleted
++        """
++        try:
++            result = self.collection.delete_one({"query_id": query_id})
++            if result.deleted_count > 0:
++                logger.info(f"Invalidated column cache for query: {query_id}")
++                return True
++            return False
++        except Exception as e:
++            logger.error(f"Error invalidating column cache for {query_id}: {str(e)}")
++            return False
++    
++    def invalidate_all(self) -> int:
++        """
++        Invalidate all cached columns.
++        
++        Returns:
++            int: Number of entries deleted
++        """
++        try:
++            result = self.collection.delete_many({})
++            logger.info(f"Invalidated {result.deleted_count} column cache entries")
++            return result.deleted_count
++        except Exception as e:
++            logger.error(f"Error invalidating all column caches: {str(e)}")
++            return 0
++    
++    def get_stats(self) -> Dict[str, Any]:
++        """
++        Get cache statistics.
++        
++        Returns:
++            Dict containing cache statistics
++        """
++        try:
++            total_entries = self.collection.count_documents({})
++            active_entries = self.collection.count_documents({
++                "expires_at": {"$gt": datetime.utcnow()}
++            })
++            
++            return {
++                "total_entries": total_entries,
++                "active_entries": active_entries,
++                "expired_entries": total_entries - active_entries
++            }
++        except Exception as e:
++            logger.error(f"Failed to get column cache stats: {str(e)}")
++            return {"error": str(e)}
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.env' '--exclude=.idea' /tmp/orig_repo/preview_joined_data.py python_src/preview_joined_data.py
+--- /tmp/orig_repo/preview_joined_data.py	1970-01-01 00:00:00.000000000 +0000
++++ python_src/preview_joined_data.py	2025-12-06 21:58:13.016760657 +0000
+@@ -0,0 +1,215 @@
++#!/usr/bin/env python3
++"""
++Preview Joined Data Script
++
++Executes queries from an analysis plan and joins the results 
++without running analysis - just returns the joined data preview.
++"""
++
++import sys
++import os
++import json
++import argparse
++import logging
++
++os.environ["MONGO_URI"] = os.environ.get("MONGODB_URI", "")
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++logging.basicConfig(level=logging.WARNING)
++logger = logging.getLogger(__name__)
++
++from core.query_engine import QueryEngine
++from models.analysis_plan import AnalysisPlan
++from models.stored_query import StoredQuery
++
++
++def preview_joined_data(plan_id: str = None, plan_data: dict = None, limit: int = 100, join_type: str = None):
++    """
++    Execute queries and return joined data preview without analysis.
++    
++    Args:
++        plan_id: Analysis plan ID to load from MongoDB
++        plan_data: Analysis plan data (alternative to plan_id)
++        limit: Maximum number of rows to return
++        join_type: Override join type (inner, left, right, outer)
++        
++    Returns:
++        Dict with joined data preview
++    """
++    if plan_id:
++        plan_model = AnalysisPlan()
++        plan = plan_model.get_by_id(plan_id)
++        if not plan:
++            return {
++                "success": False,
++                "error": f"Analysis plan not found: {plan_id}"
++            }
++    elif plan_data:
++        plan = plan_data
++    else:
++        return {
++            "success": False,
++            "error": "Either plan_id or plan_data is required"
++        }
++    
++    query_configs = plan.get("queries", [])
++    
++    if len(query_configs) < 1:
++        return {
++            "success": False,
++            "error": "At least 1 query is required"
++        }
++    
++    join_columns = []
++    for qc in query_configs:
++        if qc.get("join_column"):
++            join_columns.append(qc["join_column"])
++    
++    how = join_type if join_type else plan.get("join_type", "inner")
++    if how not in ("inner", "left", "right", "outer"):
++        how = "inner"
++    
++    engine = QueryEngine()
++    stored_query = StoredQuery()
++    
++    queries = []
++    for qc in query_configs:
++        query_id = qc.get("query_id")
++        sq = stored_query.get_by_id(query_id)
++        if not sq:
++            return {
++                "success": False,
++                "error": f"Stored query not found: {query_id}"
++            }
++        queries.append({
++            "source_id": sq["connector_id"],
++            "parameters": sq["parameters"],
++            "alias": qc.get("alias", query_id)
++        })
++    
++    try:
++        if len(queries) == 1:
++            result = engine.execute_stored_query(query_configs[0]["query_id"], use_cache=True)
++            if not result.get("success"):
++                return {
++                    "success": False,
++                    "error": result.get("error", "Query execution failed")
++                }
++            records = engine._extract_records(result)
++            if not records:
++                return {
++                    "success": False,
++                    "error": "No data returned from query"
++                }
++            
++            import pandas as pd
++            df = pd.DataFrame(records)
++        else:
++            unique_join_cols = list(set(join_columns)) if join_columns else None
++            if not unique_join_cols:
++                return {
++                    "success": False,
++                    "error": "Join columns are required for multiple queries. Please specify join_column for each query in the plan."
++                }
++            
++            df = engine.execute_queries_to_dataframe(
++                queries=queries,
++                join_on=unique_join_cols,
++                how=how
++            )
++        
++        total_rows = len(df)
++        total_columns = len(df.columns)
++        columns = list(df.columns)
++        column_types = {col: str(df[col].dtype) for col in df.columns}
++        
++        preview_df = df.head(limit)
++        rows = preview_df.to_dict(orient="records")
++        
++        for row in rows:
++            for key, value in row.items():
++                if hasattr(value, 'item'):
++                    row[key] = value.item()
++                elif str(value) == 'nan' or str(value) == 'NaN':
++                    row[key] = None
++        
++        return {
++            "success": True,
++            "plan_id": plan_id,
++            "total_rows": total_rows,
++            "total_columns": total_columns,
++            "preview_rows": len(rows),
++            "columns": columns,
++            "column_types": column_types,
++            "data": rows
++        }
++        
++    except Exception as e:
++        return {
++            "success": False,
++            "error": str(e)
++        }
++
++
++def preview_from_query_ids(query_ids: list, join_on: list, join_type: str = "inner", limit: int = 100):
++    """
++    Execute queries and return joined data preview directly from query IDs.
++    
++    Args:
++        query_ids: List of stored query IDs
++        join_on: List of columns to join on - must match query_ids length exactly
++        join_type: Join type (inner, left, right, outer)
++        limit: Maximum number of rows to return
++        
++    Returns:
++        Dict with joined data preview
++    """
++    if len(join_on) != len(query_ids):
++        return {
++            "success": False,
++            "error": f"join_on must have exactly {len(query_ids)} entries (one per query). Got {len(join_on)}."
++        }
++    
++    queries = []
++    for i, qid in enumerate(query_ids):
++        queries.append({
++            "query_id": qid,
++            "alias": qid,
++            "join_column": join_on[i]
++        })
++    
++    plan_data = {
++        "queries": queries,
++        "join_type": join_type
++    }
++    return preview_joined_data(plan_data=plan_data, limit=limit, join_type=join_type)
++
++
++def main():
++    parser = argparse.ArgumentParser(description="Preview joined query data")
++    parser.add_argument("--plan-id", "-p", help="Analysis plan ID")
++    parser.add_argument("--query-ids", "-q", help="JSON array of query IDs")
++    parser.add_argument("--join-on", "-j", help="JSON array of join columns")
++    parser.add_argument("--join-type", "-t", default="inner",
++                        choices=["inner", "left", "right", "outer"],
++                        help="Join type")
++    parser.add_argument("--limit", "-l", type=int, default=100,
++                        help="Maximum number of rows to return")
++    
++    args = parser.parse_args()
++    
++    if args.plan_id:
++        result = preview_joined_data(plan_id=args.plan_id, limit=args.limit, join_type=args.join_type)
++    elif args.query_ids and args.join_on:
++        query_ids = json.loads(args.query_ids)
++        join_on = json.loads(args.join_on)
++        result = preview_from_query_ids(query_ids, join_on, args.join_type, args.limit)
++    else:
++        result = {"success": False, "error": "Either --plan-id or (--query-ids and --join-on) required"}
++    
++    print(json.dumps(result, indent=2, default=str))
++
++
++if __name__ == "__main__":
++    main()
+diff -ruN '--exclude=.git' '--exclude=__pycache__' '--exclude=.env' '--exclude=.idea' /tmp/orig_repo/validate_connector.py python_src/validate_connector.py
+--- /tmp/orig_repo/validate_connector.py	1970-01-01 00:00:00.000000000 +0000
++++ python_src/validate_connector.py	2025-12-05 22:44:48.796419348 +0000
+@@ -0,0 +1,70 @@
++#!/usr/bin/env python3
++"""
++Wrapper script to validate connector connections via Python.
++This script is invoked by the Node.js backend via subprocess.
++"""
++import sys
++import os
++import json
++import logging
++
++os.environ["MONGO_URI"] = os.environ.get("MONGODB_URI", "")
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++from core.connector_manager import ConnectorManager
++
++logging.basicConfig(level=logging.WARNING)
++logger = logging.getLogger(__name__)
++
++
++def main():
++    if len(sys.argv) < 2:
++        result = {
++            "success": False,
++            "error": "Missing source_id argument"
++        }
++        print(json.dumps(result))
++        sys.exit(1)
++    
++    source_id = sys.argv[1]
++    
++    try:
++        manager = ConnectorManager()
++        connector = manager.get_connector(source_id)
++        
++        if not connector:
++            result = {
++                "success": False,
++                "error": f"Connector not found or failed to load: {source_id}",
++                "source_id": source_id
++            }
++            print(json.dumps(result))
++            sys.exit(1)
++        
++        is_valid = connector.validate()
++        
++        result = {
++            "success": True,
++            "source_id": source_id,
++            "valid": is_valid,
++            "connected": connector.connected,
++            "connector_type": connector.config.get("connector_type"),
++            "capabilities": connector.get_capabilities()
++        }
++        
++        print(json.dumps(result, default=str))
++        
++    except Exception as e:
++        logger.error(f"Validation error: {str(e)}")
++        result = {
++            "success": False,
++            "error": str(e),
++            "source_id": source_id
++        }
++        print(json.dumps(result))
++        sys.exit(1)
++
++
++if __name__ == "__main__":
++    main()
