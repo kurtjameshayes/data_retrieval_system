@@ -76,6 +76,21 @@ class BaseConnector(ABC):
         """
         pass
     
+    def process_query_result(self, result: Dict[str, Any], 
+                             context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Optional hook allowing connectors to post-process query results before
+        they are cached or returned from the query engine.
+        
+        Args:
+            result: Standardized result payload returned by `query`
+            context: Optional execution context (parameters, stored query, etc.)
+        
+        Returns:
+            Dict containing the (potentially) modified result payload
+        """
+        return result
+    
     def get_capabilities(self) -> Dict[str, Any]:
         """
         Get connector capabilities and supported features.

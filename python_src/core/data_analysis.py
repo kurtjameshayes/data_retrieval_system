@@ -65,7 +65,9 @@ class DataAnalysisEngine:
             if not col_x or not col_y:
                 raise ValueError("comparisons entries require 'x' and 'y' keys")
 
-            clean_df = df[[col_x, col_y]].dropna()
+            clean_df = self._select_aligned_columns(
+                df, [col_x, col_y], "inferential_analysis"
+            ).dropna()
             if clean_df.empty:
                 results.append({
                     "x": col_x,
@@ -104,7 +106,9 @@ class DataAnalysisEngine:
         freq: Optional[str] = None,
         rolling_window: int = 7,
     ) -> Dict[str, Any]:
-        ts_df = df[[time_column, target_column]].dropna()
+        ts_df = self._select_aligned_columns(
+            df, [time_column, target_column], "time_series_analysis"
+        ).dropna()
         if ts_df.empty:
             raise ValueError("No data available for time series analysis")
 
@@ -134,7 +138,10 @@ class DataAnalysisEngine:
         test_size: float = 0.2,
         random_state: int = 42,
     ) -> Dict[str, Any]:
-        dataset = df[features + [target]].dropna()
+        required = features + [target]
+        dataset = self._select_aligned_columns(
+            df, required, "linear_regression"
+        ).dropna()
         if len(dataset) < 2:
             raise ValueError("Not enough rows for regression analysis")
 
@@ -151,6 +158,7 @@ class DataAnalysisEngine:
         model = LinearRegression()
         model.fit(X_train, y_train)
         predictions = model.predict(X_test)
+        full_predictions = model.predict(X)
 
         mse = mean_squared_error(y_test, predictions)
         return {
@@ -159,6 +167,9 @@ class DataAnalysisEngine:
             "r2_score": float(r2_score(y_test, predictions)),
             "rmse": float(np.sqrt(mse)),
             "predictions_sample": predictions[:5].tolist(),
+            "full_predictions": full_predictions.tolist(),
+            "actual_values": y.tolist(),
+            "row_indices": dataset.index.tolist(),
         }
 
     def random_forest_regression(
@@ -171,7 +182,10 @@ class DataAnalysisEngine:
         test_size: float = 0.2,
         random_state: int = 42,
     ) -> Dict[str, Any]:
-        dataset = df[features + [target]].dropna()
+        required = features + [target]
+        dataset = self._select_aligned_columns(
+            df, required, "random_forest_regression"
+        ).dropna()
         if len(dataset) < 5:
             raise ValueError("Not enough rows for random forest regression")
 
@@ -189,6 +203,7 @@ class DataAnalysisEngine:
         )
         model.fit(X_train, y_train)
         predictions = model.predict(X_test)
+        full_predictions = model.predict(X)
 
         mse = mean_squared_error(y_test, predictions)
         return {
@@ -196,6 +211,9 @@ class DataAnalysisEngine:
             "r2_score": float(r2_score(y_test, predictions)),
             "rmse": float(np.sqrt(mse)),
             "predictions_sample": predictions[:5].tolist(),
+            "full_predictions": full_predictions.tolist(),
+            "actual_values": y.tolist(),
+            "row_indices": dataset.index.tolist(),
         }
 
     def multivariate_analysis(
@@ -204,7 +222,9 @@ class DataAnalysisEngine:
         features: List[str],
         n_components: int = 2,
     ) -> Dict[str, Any]:
-        dataset = df[features].dropna()
+        dataset = self._select_aligned_columns(
+            df, features, "multivariate_analysis"
+        ).dropna()
         if dataset.empty:
             raise ValueError("No data available for multivariate analysis")
 
@@ -236,6 +256,52 @@ class DataAnalysisEngine:
 
         result["model_type"] = model_type
         return result
+
+    @staticmethod
+    def _require_columns(df: pd.DataFrame, columns: List[str], context: str) -> Dict[Any, str]:
+        if not columns:
+            return {}
+
+        exact_lookup = {str(col): col for col in df.columns}
+        normalized_lookup = {
+            str(col).strip().casefold(): col for col in df.columns
+        }
+        resolved: Dict[Any, str] = {}
+        missing = []
+
+        for requested in columns:
+            requested_str = str(requested)
+            if requested_str in exact_lookup:
+                resolved[requested] = exact_lookup[requested_str]
+                continue
+
+            normalized_key = requested_str.strip().casefold()
+            actual = normalized_lookup.get(normalized_key)
+            if actual is None:
+                missing.append(requested)
+            else:
+                resolved[requested] = actual
+
+        if missing:
+            available = sorted(str(col) for col in df.columns)
+            raise ValueError(
+                f"{context} requires columns {missing}, but the DataFrame only contains {available}"
+            )
+
+        return resolved
+
+    def _select_aligned_columns(
+        self, df: pd.DataFrame, columns: List[str], context: str
+    ) -> pd.DataFrame:
+        """
+        Return a DataFrame subset that respects the requested column labels, even if
+        the source DataFrame uses different casing. The returned DataFrame keeps the
+        requested names for downstream logic.
+        """
+        column_map = self._require_columns(df, columns, context)
+        subset = df[[column_map[col] for col in columns]].copy()
+        subset.columns = columns
+        return subset
 
     def run_suite(self, df: pd.DataFrame, plan: Dict[str, Any]) -> Dict[str, Any]:
         """
