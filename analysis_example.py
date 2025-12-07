@@ -42,24 +42,23 @@ def _normalize_join_columns(
 
 def _resolve_join_columns_per_query(
     query_ids: Sequence[str],
-    default_join_columns: Sequence[str],
     overrides: Optional[Dict[str, Sequence[str]]] = None,
 ) -> List[List[str]]:
-    base_columns = _normalize_join_columns(default_join_columns)
     overrides = overrides or {}
     resolved: List[List[str]] = []
+    missing: List[str] = []
     for query_id in query_ids:
-        override_value = overrides.get(query_id)
-        columns = (
-            list(override_value)
-            if override_value is not None
-            else list(base_columns)
-        )
+        columns = _normalize_join_columns(overrides.get(query_id))
         if not columns:
-            raise ValueError(
-                f"Join columns are required for query '{query_id}'. Provide --join-on or --query-join-column."
-            )
+            missing.append(query_id)
+            continue
         resolved.append(columns)
+    if missing:
+        missing_queries = ", ".join(missing)
+        raise ValueError(
+            "Join columns are required for each query when building a plan. "
+            f"Provide --query-join-column entries for: {missing_queries}."
+        )
     return resolved
 
 
@@ -263,12 +262,6 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        "--join-on",
-        nargs="+",
-        default=["zip code tabulation area"],
-        help="Columns shared across the saved queries used for the join",
-    )
-    parser.add_argument(
         "--query-join-column",
         action="append",
         dest="query_join_columns",
@@ -375,7 +368,7 @@ def main():
             feature_columns=args.feature_columns,
         )
         join_columns_per_query = _resolve_join_columns_per_query(
-            args.query_ids, args.join_on, join_overrides
+            args.query_ids, join_overrides
         )
         join_keys = list(join_columns_per_query[0])
         (

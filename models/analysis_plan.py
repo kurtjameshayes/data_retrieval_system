@@ -34,7 +34,6 @@ class AnalysisPlan:
                 - parameter_overrides (Dict[str, Any], optional)
                 - join_column (Union[str, List[str]], required): Column(s) used to join
                   this query's results with the rest of the plan
-        join_on (List[str], optional): Legacy shared join key list retained for backward compatibility
         how (str): pandas merge strategy (inner, left, right, outer)
         analysis_plan (Dict[str, Any]): Instructions passed to DataAnalysisEngine
         aggregation (Dict[str, Any], optional): Aggregation configuration
@@ -97,20 +96,6 @@ class AnalysisPlan:
                     f"Choose from {sorted(self.VALID_JOIN_STRATEGIES)}."
                 )
 
-    @staticmethod
-    def _normalize_join_keys(join_on: Optional[Sequence[str]]) -> Optional[List[str]]:
-        if join_on is None:
-            return None
-        if isinstance(join_on, str):
-            return [join_on]
-        if isinstance(join_on, Sequence):
-            normalized = [key for key in join_on if key]
-            if not normalized:
-                raise ValueError("join_on must contain non-empty strings.")
-            return list(normalized)
-        raise ValueError("join_on must be a string or sequence of strings.")
-
-    @staticmethod
     def _coerce_join_columns(
         value: Optional[Union[str, Sequence[str]]]
     ) -> List[str]:
@@ -168,9 +153,6 @@ class AnalysisPlan:
     ) -> Dict[str, Any]:
         self._validate_required_fields(plan_data, for_update=for_update)
         prepared = dict(plan_data)
-
-        if "join_on" in prepared:
-            prepared["join_on"] = self._normalize_join_keys(prepared["join_on"])
 
         if "queries" in prepared:
             prepared["queries"] = self._normalize_queries(prepared["queries"])

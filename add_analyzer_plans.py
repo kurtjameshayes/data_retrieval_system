@@ -99,8 +99,6 @@ def _apply_plans(plans: Iterable[dict]) -> None:
             query_ids = plan.get("query_ids")
             queries = plan.get("queries")
             query_join_columns = None
-            if not queries and query_ids and plan.get("join_on"):
-                query_join_columns = [list(plan["join_on"]) for _ in query_ids]
             action = manager.add_analyzer_plan(
                 plan_id=plan["plan_id"],
                 plan_name=plan.get("plan_name"),

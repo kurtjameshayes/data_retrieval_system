@@ -121,10 +121,6 @@ def _print_summary(
             label = entry.get("alias") or entry.get("query_id") or "-"
             columns = ", ".join(entry.get("columns") or [])
             print(f"    - {label}: {columns}")
-    else:
-        legacy_keys = plan_meta.get("join_on") or []
-        if legacy_keys:
-            print(f"  Join keys: {', '.join(legacy_keys)}")
     print(f"  Join type: {plan_meta.get('how', 'inner')}")
 
     print(f"\nResolved query specs ({len(query_specs)}):")
