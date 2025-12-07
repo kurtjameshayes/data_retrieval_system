@@ -20,6 +20,7 @@ class CensusConnector(BaseConnector):
         self.api_key = config.get("api_key")  # Optional but recommended
         self.max_retries = config.get("max_retries", 3)
         self.retry_delay = config.get("retry_delay", 1)
+        self.variable_descriptions = {}  # Store for name mapping
     
     def connect(self) -> bool:
         """Establish connection by validating API access."""
@@ -53,6 +54,10 @@ class CensusConnector(BaseConnector):
         except Exception as e:
             logger.error(f"Validation failed: {str(e)}")
             return False
+    
+    def set_variable_descriptions(self, descriptions: Dict[str, str]):
+        """Set variable code to description mapping for column name expansion."""
+        self.variable_descriptions = descriptions or {}
     
     def query(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -101,7 +106,7 @@ class CensusConnector(BaseConnector):
                     if 'application/json' in content_type or response.text.strip().startswith('['):
                         try:
                             data = response.json()
-                            return self.transform(data)
+                            return self.transform(data, parameters)
                         except ValueError as je:
                             raise Exception(f"Invalid JSON response: {str(je)}")
                     else:
@@ -129,7 +134,7 @@ class CensusConnector(BaseConnector):
         
         raise Exception("Max retries exceeded")
     
-    def transform(self, data: Any) -> Dict[str, Any]:
+    def transform(self, data: Any, parameters: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Transform Census data to standardized format.
         
@@ -137,6 +142,7 @@ class CensusConnector(BaseConnector):
         
         Args:
             data: Raw API response data
+            parameters: Query parameters (may contain variable descriptions)
             
         Returns:
             Dict containing standardized data with metadata
@@ -151,11 +157,14 @@ class CensusConnector(BaseConnector):
         # First row contains headers
         headers = data[0]
         
+        # Expand header names if we have variable descriptions
+        expanded_headers = self._expand_header_names(headers)
+        
         # Convert remaining rows to dictionaries
         records = []
         for row in data[1:]:
             record = {}
-            for i, header in enumerate(headers):
+            for i, header in enumerate(expanded_headers):
                 record[header] = row[i] if i < len(row) else None
             records.append(record)
         
@@ -164,11 +173,29 @@ class CensusConnector(BaseConnector):
             "metadata": self._create_metadata(len(records), {}),
             "data": records,
             "schema": {
-                "fields": self._create_schema_from_headers(headers)
+                "fields": self._create_schema_from_headers(expanded_headers)
             }
         }
         
         return standardized
+    
+    def _expand_header_names(self, headers: List[str]) -> List[str]:
+        """
+        Expand abbreviated Census variable codes to full descriptions if available.
+        
+        Args:
+            headers: List of header names (may contain codes like B22010_001E)
+            
+        Returns:
+            List of headers with codes expanded to descriptions where possible
+        """
+        expanded = []
+        for header in headers:
+            if header in self.variable_descriptions:
+                expanded.append(self.variable_descriptions[header])
+            else:
+                expanded.append(header)
+        return expanded
     
     def _create_schema_from_headers(self, headers: List[str]) -> List[Dict[str, str]]:
         """

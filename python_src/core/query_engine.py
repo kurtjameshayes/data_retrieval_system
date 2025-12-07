@@ -177,6 +177,11 @@ class QueryEngine:
             
             # Execute the query with query_id reference
             processing_context = {"stored_query": stored_query}
+            
+            # For Census queries, pass variable descriptions for column name expansion
+            if connector_id == "census_api" and stored_query.get("notes", {}).get("variables"):
+                processing_context["variable_descriptions"] = stored_query["notes"]["variables"]
+            
             result = self.execute_query(
                 connector_id,
                 resolved_parameters,
